@@ -1,0 +1,332 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: jarvis-postgres
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: jarvis_dev_password
+      POSTGRES_DB: jarvis
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jarvis-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: jarvis-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jarvis-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: jarvis-api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://jarvis:jarvis_dev_password@postgres:5432/jarvis
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      CONVERSATION_SERVICE_URL: http://conversation-service:8001
+      VOICE_PROCESSING_URL: http://voice-processing:8002
+      WEATHER_SERVICE_URL: http://weather-service:8003
+      NEWS_SERVICE_URL: http://news-service:8004
+      BRIEFING_SERVICE_URL: http://briefing-service:8005
+      CALENDAR_SERVICE_URL: http://calendar-service:8006
+      TASK_EXECUTION_URL: http://task-execution:8007
+      NOTIFICATION_SERVICE_URL: http://notification-service:8008
+      USER_PROFILE_URL: http://user-profile:8009
+      CORS_ORIGIN: "*"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Conversation Service
+  conversation-service:
+    build:
+      context: ./services/conversation-service
+      dockerfile: Dockerfile
+    container_name: jarvis-conversation-service
+    ports:
+      - "8001:8001"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8001
+      DATABASE_URL: postgresql://jarvis:jarvis_dev_password@postgres:5432/jarvis
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Voice Processing Service
+  voice-processing:
+    build:
+      context: ./services/voice-processing
+      dockerfile: Dockerfile
+    container_name: jarvis-voice-processing
+    ports:
+      - "8002:8002"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8002
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_AUDIO_BUCKET: ${S3_AUDIO_BUCKET:-jarvis-audio}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Weather Service
+  weather-service:
+    build:
+      context: ./services/weather-service
+      dockerfile: Dockerfile
+    container_name: jarvis-weather-service
+    ports:
+      - "8003:8003"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8003
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # News Service
+  news-service:
+    build:
+      context: ./services/news-service
+      dockerfile: Dockerfile
+    container_name: jarvis-news-service
+    ports:
+      - "8004:8004"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8004
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Briefing Service
+  briefing-service:
+    build:
+      context: ./services/briefing-service
+      dockerfile: Dockerfile
+    container_name: jarvis-briefing-service
+    ports:
+      - "8005:8005"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8005
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      WEATHER_SERVICE_URL: http://weather-service:8003
+      NEWS_SERVICE_URL: http://news-service:8004
+      CALENDAR_SERVICE_URL: http://calendar-service:8006
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}
+    depends_on:
+      redis:
+        condition: service_healthy
+      weather-service:
+        condition: service_started
+      news-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Calendar Service
+  calendar-service:
+    build:
+      context: ./services/calendar-service
+      dockerfile: Dockerfile
+    container_name: jarvis-calendar-service
+    ports:
+      - "8006:8006"
+    environment:
+      PORT: 8006
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8006/auth/callback}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Task Execution Service
+  task-execution:
+    build:
+      context: ./services/task-execution
+      dockerfile: Dockerfile
+    container_name: jarvis-task-execution
+    ports:
+      - "8007:8007"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8007
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://jarvis:jarvis_dev_password@postgres:5432/jarvis
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      CONVERSATION_SERVICE_URL: http://conversation-service:8001
+      BRIEFING_SERVICE_URL: http://briefing-service:8005
+      NOTIFICATION_SERVICE_URL: http://notification-service:8008
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Notification Service
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: jarvis-notification-service
+    ports:
+      - "8008:8008"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8008
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # User Profile Service
+  user-profile:
+    build:
+      context: ./services/user-profile
+      dockerfile: Dockerfile
+    container_name: jarvis-user-profile
+    ports:
+      - "8009:8009"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8009
+      DATABASE_URL: postgresql://jarvis:jarvis_dev_password@postgres:5432/jarvis
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  jarvis-network:
+    driver: bridge

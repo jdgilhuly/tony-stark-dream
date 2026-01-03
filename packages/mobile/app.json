@@ -1,0 +1,36 @@
+{
+  "name": "JARVIS",
+  "displayName": "JARVIS",
+  "expo": {
+    "name": "JARVIS",
+    "slug": "jarvis",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0F"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jarvis.assistant"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0A0F"
+      },
+      "package": "com.jarvis.assistant"
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow JARVIS to access your microphone for voice commands."
+        }
+      ]
+    ]
+  }
+}

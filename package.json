@@ -1,0 +1,40 @@
+{
+  "name": "jarvis",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JARVIS - Just A Rather Very Intelligent System",
+  "keywords": [
+    "ai",
+    "assistant",
+    "jarvis",
+    "voice",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/user/jarvis.git"
+  },
+  "license": "MIT",
+  "author": "Daniel Gilhuly",
+  "workspaces": [
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "build": "pnpm -r build",
+    "clean": "pnpm -r clean",
+    "dev": "pnpm -r --parallel dev",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "cli": "pnpm --filter @jarvis/cli start",
+    "api-gateway": "pnpm --filter @jarvis/api-gateway start"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
