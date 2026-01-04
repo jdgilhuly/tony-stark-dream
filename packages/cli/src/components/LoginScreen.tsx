@@ -19,6 +19,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
+  const [errorInput, setErrorInput] = useState('');
 
   const client = React.useMemo(() => createApiClient({ baseUrl: serverUrl }), [serverUrl]);
 
@@ -46,7 +47,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
     }
   }, [client, onSuccess, exit]);
 
-  const handleRegister = useCallback(async () => {
+  const handleRegister = useCallback(async (regEmail: string, regPassword: string, regName: string) => {
     setStep('loading');
     setError(null);
 
@@ -55,7 +56,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
       const response = await fetch(`${serverUrl}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name }),
+        body: JSON.stringify({ email: regEmail, password: regPassword, name: regName }),
       });
 
       const data = await response.json() as {
@@ -80,7 +81,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
       setError(err instanceof Error ? err.message : 'Connection failed');
       setStep('error');
     }
-  }, [serverUrl, email, password, name, onSuccess, exit]);
+  }, [serverUrl, onSuccess, exit]);
 
   const handleEmailSubmit = useCallback((value: string) => {
     setEmail(value);
@@ -92,27 +93,29 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
     if (isNewUser) {
       setStep('register_name');
     } else {
-      handleLogin();
+      handleLogin(email, value);
     }
-  }, [isNewUser, handleLogin]);
+  }, [isNewUser, handleLogin, email]);
 
   const handleNameSubmit = useCallback((value: string) => {
     setName(value);
-    handleRegister();
-  }, [handleRegister]);
+    handleRegister(email, password, value);
+  }, [handleRegister, email, password]);
 
-  const handleErrorInput = useCallback((value: string) => {
-    if (value.toLowerCase() === 'register') {
+  const handleErrorInput = useCallback(() => {
+    if (errorInput.toLowerCase() === 'register') {
       setIsNewUser(true);
       setStep('email');
       setEmail('');
       setPassword('');
+      setErrorInput('');
     } else {
       setStep('email');
       setEmail('');
       setPassword('');
+      setErrorInput('');
     }
-  }, []);
+  }, [errorInput]);
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -188,11 +191,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
         <Box flexDirection="column">
           <Text color="red">Error: {error}</Text>
           <Box marginTop={1}>
+            <Text>Type "register" to create account, or press Enter to retry: </Text>
             <TextInput
-              value=""
-              onChange={() => {}}
+              value={errorInput}
+              onChange={setErrorInput}
               onSubmit={handleErrorInput}
-              placeholder="Press Enter to retry..."
+              placeholder=""
             />
           </Box>
         </Box>
