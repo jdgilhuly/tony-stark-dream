@@ -1,20 +1,104 @@
 import json
 import logging
 from typing import AsyncGenerator
-import boto3
-from botocore.config import Config
+from abc import ABC, abstractmethod
 
 from .config import get_settings
-from .models import BedrockMessage, Message, MessageRole
+from .models import Message, MessageRole
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-class BedrockClient:
+class QuotaExceededError(Exception):
+    """Raised when API quota/credits are exhausted."""
+    pass
+
+
+class LLMClient(ABC):
+    """Abstract base class for LLM clients."""
+
+    @abstractmethod
+    async def generate_response(
+        self,
+        messages: list[Message],
+        system_prompt: str,
+        max_tokens: int = None
+    ) -> tuple[str, dict]:
+        """Generate a response from the LLM."""
+        pass
+
+
+class OpenAIClient(LLMClient):
+    """Client for OpenAI API."""
+
+    def __init__(self):
+        from openai import OpenAI
+        self.client = OpenAI(api_key=settings.openai_api_key)
+        self.model = settings.openai_model
+
+    async def generate_response(
+        self,
+        messages: list[Message],
+        system_prompt: str,
+        max_tokens: int = None
+    ) -> tuple[str, dict]:
+        """Generate a response using OpenAI API."""
+        max_tokens = max_tokens or settings.openai_max_tokens
+
+        # Convert messages to OpenAI format
+        openai_messages = [{"role": "system", "content": system_prompt}]
+        for msg in messages:
+            if msg.role != MessageRole.SYSTEM:
+                openai_messages.append({
+                    "role": msg.role.value,
+                    "content": msg.content
+                })
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=openai_messages
+            )
+
+            # Extract text from response
+            response_text = response.choices[0].message.content or ""
+
+            usage = {
+                "input_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "output_tokens": response.usage.completion_tokens if response.usage else 0
+            }
+
+            logger.info(
+                f"OpenAI response generated",
+                extra={
+                    "model": self.model,
+                    "input_tokens": usage.get("input_tokens"),
+                    "output_tokens": usage.get("output_tokens")
+                }
+            )
+
+            return response_text, usage
+
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}")
+            # Check for quota exceeded error
+            error_str = str(e)
+            if "insufficient_quota" in error_str or "exceeded your current quota" in error_str:
+                raise QuotaExceededError(
+                    "OpenAI API quota exceeded. Please add credits at https://platform.openai.com/account/billing"
+                )
+            raise
+
+
+class BedrockClient(LLMClient):
     """Client for AWS Bedrock Claude API."""
 
     def __init__(self):
+        import boto3
+        from botocore.config import Config
+
         config = Config(
             region_name=settings.aws_region,
             retries={"max_attempts": 3, "mode": "adaptive"}
@@ -34,12 +118,7 @@ class BedrockClient:
         system_prompt: str,
         max_tokens: int = None
     ) -> tuple[str, dict]:
-        """
-        Generate a response using Claude via Bedrock.
-
-        Returns:
-            Tuple of (response_text, usage_info)
-        """
+        """Generate a response using Claude via Bedrock."""
         max_tokens = max_tokens or settings.bedrock_max_tokens
 
         # Convert messages to Bedrock format
@@ -92,66 +171,23 @@ class BedrockClient:
             logger.error(f"Bedrock API error: {e}")
             raise
 
-    async def generate_response_stream(
-        self,
-        messages: list[Message],
-        system_prompt: str,
-        max_tokens: int = None
-    ) -> AsyncGenerator[str, None]:
-        """
-        Generate a streaming response using Claude via Bedrock.
-
-        Yields text chunks as they arrive.
-        """
-        max_tokens = max_tokens or settings.bedrock_max_tokens
-
-        # Convert messages to Bedrock format
-        bedrock_messages = []
-        for msg in messages:
-            if msg.role != MessageRole.SYSTEM:
-                bedrock_messages.append({
-                    "role": msg.role.value,
-                    "content": msg.content
-                })
-
-        request_body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "system": system_prompt,
-            "messages": bedrock_messages
-        }
-
-        try:
-            response = self.client.invoke_model_with_response_stream(
-                modelId=self.model_id,
-                body=json.dumps(request_body),
-                contentType="application/json",
-                accept="application/json"
-            )
-
-            stream = response.get("body")
-            if stream:
-                for event in stream:
-                    chunk = event.get("chunk")
-                    if chunk:
-                        chunk_data = json.loads(chunk.get("bytes").decode())
-
-                        if chunk_data.get("type") == "content_block_delta":
-                            delta = chunk_data.get("delta", {})
-                            if delta.get("type") == "text_delta":
-                                yield delta.get("text", "")
-
-        except Exception as e:
-            logger.error(f"Bedrock streaming error: {e}")
-            raise
-
 
 # Singleton instance
-_bedrock_client: BedrockClient | None = None
+_llm_client: LLMClient | None = None
 
 
-def get_bedrock_client() -> BedrockClient:
-    global _bedrock_client
-    if _bedrock_client is None:
-        _bedrock_client = BedrockClient()
-    return _bedrock_client
+def get_bedrock_client() -> LLMClient:
+    """Get the configured LLM client (OpenAI or Bedrock)."""
+    global _llm_client
+    if _llm_client is None:
+        if settings.llm_provider == "openai" and settings.openai_api_key:
+            logger.info("Using OpenAI API for LLM")
+            _llm_client = OpenAIClient()
+        elif settings.aws_access_key_id and settings.aws_secret_access_key:
+            logger.info("Using AWS Bedrock for LLM")
+            _llm_client = BedrockClient()
+        else:
+            raise ValueError(
+                "No LLM provider configured. Set OPENAI_API_KEY or AWS credentials."
+            )
+    return _llm_client

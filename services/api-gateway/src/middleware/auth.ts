@@ -13,7 +13,8 @@ export interface AuthenticatedRequest extends Request {
   user?: JwtPayload;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'development-secret-change-in-production';
+// Read at runtime to ensure dotenv has loaded
+const getJwtSecret = () => process.env.JWT_SECRET ?? 'development-secret-change-in-production';
 
 export const authenticate = (
   req: AuthenticatedRequest,
@@ -33,7 +34,7 @@ export const authenticate = (
   const token = authHeader.slice(7);
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload;
     req.user = decoded;
     next();
   } catch (error) {
@@ -76,7 +77,7 @@ export const optionalAuth = (
   const token = authHeader.slice(7);
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload;
     req.user = decoded;
   } catch {
     // Ignore invalid tokens for optional auth
@@ -86,16 +87,16 @@ export const optionalAuth = (
 };
 
 export const generateToken = (userId: string, email: string): string => {
-  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '24h' });
+  return jwt.sign({ userId, email }, getJwtSecret(), { expiresIn: '24h' });
 };
 
 export const generateRefreshToken = (userId: string): string => {
-  return jwt.sign({ userId, type: 'refresh' }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ userId, type: 'refresh' }, getJwtSecret(), { expiresIn: '7d' });
 };
 
 export const verifyRefreshToken = (token: string): { userId: string } | null => {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; type: string };
+    const decoded = jwt.verify(token, getJwtSecret()) as { userId: string; type: string };
     if (decoded.type !== 'refresh') {
       return null;
     }

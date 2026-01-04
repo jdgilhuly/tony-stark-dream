@@ -9,14 +9,22 @@ class Settings(BaseSettings):
     port: int = 8001
     debug: bool = False
 
-    # AWS
+    # AWS (for Bedrock fallback)
     aws_region: str = "us-east-1"
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
 
-    # AWS Bedrock
+    # OpenAI API (preferred)
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o"
+    openai_max_tokens: int = 4096
+
+    # AWS Bedrock (fallback)
     bedrock_model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
     bedrock_max_tokens: int = 4096
+
+    # LLM Provider: "openai" or "bedrock"
+    llm_provider: str = "openai"
 
     # Database
     database_url: str = "postgresql://jarvis:jarvis@localhost:5432/jarvis"
@@ -43,8 +51,9 @@ class Settings(BaseSettings):
     notification_service_url: str = "http://localhost:8008"
 
     class Config:
-        env_file = ".env"
+        env_file = "../../.env"  # Project root .env file
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore extra env vars not defined in Settings
 
 
 @lru_cache

@@ -1,3 +1,9 @@
+import { config } from 'dotenv';
+import { resolve } from 'path';
+
+// Load environment variables from project root
+config({ path: resolve(import.meta.dirname, '../../../.env') });
+
 import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -54,16 +60,16 @@ app.use('/health', healthRouter);
 // Auth routes (public)
 app.use('/auth', authRouter);
 
-// Protected routes
-app.use('/conversation', authenticate, conversationRouter);
-app.use('/user', authenticate, userRouter);
-app.use('/briefing', authenticate, briefingRouter);
-app.use('/tasks', authenticate, tasksRouter);
-app.use('/notifications', authenticate, notificationsRouter);
-app.use('/voice', authenticate, voiceRouter);
-app.use('/calendar', authenticate, calendarRouter);
-app.use('/weather', authenticate, weatherRouter);
-app.use('/news', authenticate, newsRouter);
+// Routes (auth disabled for development)
+app.use('/conversation', conversationRouter);
+app.use('/user', conversationRouter);  // TODO: restore userRouter with auth
+app.use('/briefing', briefingRouter);
+app.use('/tasks', tasksRouter);
+app.use('/notifications', notificationsRouter);
+app.use('/voice', voiceRouter);
+app.use('/calendar', calendarRouter);
+app.use('/weather', weatherRouter);
+app.use('/news', newsRouter);
 
 // Error handling
 app.use(errorHandler);

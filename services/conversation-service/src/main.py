@@ -18,7 +18,7 @@ from .models import (
     UserContext,
 )
 from .prompts import get_jarvis_prompt
-from .bedrock_client import get_bedrock_client, BedrockClient
+from .bedrock_client import get_bedrock_client, BedrockClient, QuotaExceededError
 from .memory import get_memory_manager, MemoryManager
 from .integrations import get_integration_manager, IntegrationManager
 
@@ -65,28 +65,29 @@ app.add_middleware(
 
 
 async def get_current_user(request: Request) -> UserContext:
-    """Extract user from JWT token."""
-    auth_header = request.headers.get("Authorization")
+    """Extract user from JWT token (disabled for development)."""
+    # Auth disabled for development - return default user
+    return UserContext(
+        user_id="dev-user",
+        preferred_title="sir",
+        timezone="UTC"
+    )
 
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing authorization token")
-
-    token = auth_header.split(" ")[1]
-
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm]
-        )
-        return UserContext(
-            user_id=payload.get("userId"),
-            preferred_title=payload.get("preferredTitle", "sir"),
-            timezone=payload.get("timezone", "UTC")
-        )
-    except JWTError as e:
-        logger.error(f"JWT decode error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid token")
+    # Original auth code (commented out):
+    # auth_header = request.headers.get("Authorization")
+    # if not auth_header or not auth_header.startswith("Bearer "):
+    #     raise HTTPException(status_code=401, detail="Missing authorization token")
+    # token = auth_header.split(" ")[1]
+    # try:
+    #     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    #     return UserContext(
+    #         user_id=payload.get("userId"),
+    #         preferred_title=payload.get("preferredTitle", "sir"),
+    #         timezone=payload.get("timezone", "UTC")
+    #     )
+    # except JWTError as e:
+    #     logger.error(f"JWT decode error: {e}")
+    #     raise HTTPException(status_code=401, detail="Invalid token")
 
 
 @app.get("/health")
@@ -191,6 +192,10 @@ async def send_message(
             messages=context_messages,
             system_prompt=system_prompt
         )
+    except QuotaExceededError as e:
+        logger.error(f"LLM quota exceeded: {e}")
+        response_text = "I'm terribly sorry, sir, but my neural pathways require additional resources. The API quota has been exceeded. Please check your billing settings at platform.openai.com to restore my full capabilities."
+        usage = {}
     except Exception as e:
         logger.error(f"Bedrock generation error: {e}")
         # Fallback response

@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 
@@ -26,7 +27,7 @@ const CONVERSATION_SERVICE_URL = process.env.CONVERSATION_SERVICE_URL ?? 'http:/
 conversationRouter.post('/message', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { message, conversationId, contextHints } = req.body;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId ?? 'dev-user';  // Fallback for dev mode
 
     if (!message) {
       res.status(400).json({
@@ -59,9 +60,43 @@ conversationRouter.post('/message', async (req: AuthenticatedRequest, res: Respo
     };
     conversation.messages.push(userMessage);
 
-    // Forward to conversation service (mock response for now)
-    // In production, this would call the Python conversation service
-    const assistantResponse = await generateMockResponse(message, conversation.messages);
+    // Forward to conversation service
+    let assistantResponse: string;
+    try {
+      const serviceResponse = await axios.post(
+        `${CONVERSATION_SERVICE_URL}/conversation/message`,
+        {
+          message,
+          conversation_id: conversation.id,
+          context_hints: contextHints,
+          history: conversation.messages.map(m => ({
+            role: m.role,
+            content: m.content,
+          })),
+        },
+        {
+          headers: {
+            'Authorization': req.headers.authorization || '',
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000, // 60s timeout for AI response
+        }
+      );
+
+      if (serviceResponse.data?.message?.content) {
+        assistantResponse = serviceResponse.data.message.content;
+      } else if (serviceResponse.data?.data?.message?.content) {
+        assistantResponse = serviceResponse.data.data.message.content;
+      } else {
+        // Fallback to mock if response format is unexpected
+        logger.warn('Unexpected response format from conversation service, using fallback');
+        assistantResponse = await generateMockResponse(message, conversation.messages);
+      }
+    } catch (serviceError) {
+      // Fallback to mock response if service is unavailable
+      logger.warn(`Conversation service unavailable, using mock response: ${serviceError}`);
+      assistantResponse = await generateMockResponse(message, conversation.messages);
+    }
 
     const assistantMessage = {
       id: uuidv4(),
