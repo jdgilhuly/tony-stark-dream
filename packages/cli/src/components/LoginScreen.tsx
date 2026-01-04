@@ -22,12 +22,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
 
   const client = React.useMemo(() => createApiClient({ baseUrl: serverUrl }), [serverUrl]);
 
-  const handleLogin = useCallback(async () => {
+  const handleLogin = useCallback(async (loginEmail: string, loginPassword: string) => {
     setStep('loading');
     setError(null);
 
     try {
-      const response = await client.login(email, password);
+      const response = await client.login(loginEmail, loginPassword);
 
       if (response.success && response.data) {
         onSuccess(response.data.tokens);
@@ -44,7 +44,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
       setError(err instanceof Error ? err.message : 'Connection failed');
       setStep('error');
     }
-  }, [client, email, password, onSuccess, exit]);
+  }, [client, onSuccess, exit]);
 
   const handleRegister = useCallback(async () => {
     setStep('loading');

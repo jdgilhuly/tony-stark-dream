@@ -11,6 +11,14 @@ import { ConfigManager } from './config.js';
 const program = new Command();
 const config = new ConfigManager();
 
+function ensureInteractiveTerminal() {
+  if (!process.stdin.isTTY) {
+    console.error('Error: This command requires an interactive terminal.');
+    console.error('Please run directly in a terminal, not through a script or pipe.');
+    process.exit(1);
+  }
+}
+
 program
   .name('jarvis')
   .description('JARVIS - Just A Rather Very Intelligent System')
@@ -21,6 +29,7 @@ program
   .description('Start a conversation with JARVIS')
   .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
   .action(async (options) => {
+    ensureInteractiveTerminal();
     const tokens = config.getTokens();
 
     if (!tokens) {
@@ -36,6 +45,7 @@ program
   .description('Login to JARVIS')
   .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
   .action(async (options) => {
+    ensureInteractiveTerminal();
     render(
       <LoginScreen
         serverUrl={options.server}
@@ -59,6 +69,7 @@ program
   .description('Get your daily briefing from JARVIS')
   .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
   .action(async (options) => {
+    ensureInteractiveTerminal();
     const tokens = config.getTokens();
 
     if (!tokens) {
@@ -91,6 +102,7 @@ program
   .description('Open the JARVIS dashboard')
   .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
   .action(async (options) => {
+    ensureInteractiveTerminal();
     const tokens = config.getTokens();
 
     if (!tokens) {
@@ -106,6 +118,7 @@ program
   .description('Start voice conversation with JARVIS')
   .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
   .action(async (options) => {
+    ensureInteractiveTerminal();
     const tokens = config.getTokens();
 
     if (!tokens) {
@@ -122,6 +135,7 @@ program
   .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
   .option('-w, --wake-word <word>', 'Wake word to listen for', 'jarvis')
   .action(async (options) => {
+    ensureInteractiveTerminal();
     const tokens = config.getTokens();
 
     if (!tokens) {
@@ -146,6 +160,7 @@ program
 
 // Default command - start chat
 program.action(async () => {
+  ensureInteractiveTerminal();
   const tokens = config.getTokens();
   const serverUrl = config.get('serverUrl') ?? 'http://localhost:3000';
 

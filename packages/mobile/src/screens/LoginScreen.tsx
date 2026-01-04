@@ -19,7 +19,10 @@ export function LoginScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const { login, register, isLoading, error } = useAuthStore();
+  const login = useAuthStore((state) => state.login);
+  const register = useAuthStore((state) => state.register);
+  const isLoading = useAuthStore((state) => state.isLoading);
+  const error = useAuthStore((state) => state.error);
 
   const handleSubmit = async () => {
     if (!email.trim() || !password.trim()) {
