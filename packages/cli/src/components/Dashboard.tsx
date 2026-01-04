@@ -59,7 +59,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ serverUrl, tokens }) => {
       // Fetch briefing (which includes weather, calendar, news)
       const briefingRes = await fetch(`${serverUrl}/briefing/daily`, { headers });
       if (briefingRes.ok) {
-        const briefingData = await briefingRes.json();
+        const briefingData = await briefingRes.json() as { success: boolean; data?: DailyBriefing };
         if (briefingData.success && briefingData.data) {
           setData({
             briefing: briefingData.data,

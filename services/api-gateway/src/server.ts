@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -21,7 +21,7 @@ import { authenticate, optionalAuth } from './middleware/auth.js';
 import { handleWebSocketConnection } from './websocket/handler.js';
 import { logger } from './utils/logger.js';
 
-const app = express();
+const app: Application = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 

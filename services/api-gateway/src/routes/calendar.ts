@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import axios from 'axios';
 
-const router = Router();
+const router: RouterType = Router();
 const CALENDAR_SERVICE_URL = process.env.CALENDAR_SERVICE_URL || 'http://localhost:8006';
 
 // Get OAuth authorization URL

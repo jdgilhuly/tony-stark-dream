@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import {
   generateToken,
@@ -7,7 +8,7 @@ import {
 } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 
-export const authRouter = Router();
+export const authRouter: RouterType = Router();
 
 // In-memory user store for development (replace with database)
 const users = new Map<string, { id: string; email: string; password: string; name: string }>();

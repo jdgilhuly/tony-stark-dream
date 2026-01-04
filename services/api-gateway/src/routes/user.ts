@@ -1,9 +1,10 @@
 import { Router, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import axios from 'axios';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 
-export const userRouter = Router();
+export const userRouter: RouterType = Router();
 
 const USER_PROFILE_URL = process.env.USER_PROFILE_URL || 'http://localhost:8009';
 

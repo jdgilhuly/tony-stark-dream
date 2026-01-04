@@ -83,7 +83,7 @@ start_node_service() {
 
     cd "$service_dir"
     echo -e "${GREEN}Starting $service_name...${NC}"
-    pnpm dev
+    bun run dev
 }
 
 case "${1:-help}" in
@@ -105,7 +105,7 @@ case "${1:-help}" in
     api)
         cd services/api-gateway
         echo -e "${GREEN}Starting API Gateway on port 3000...${NC}"
-        pnpm dev
+        bun run dev
         ;;
 
     conversation)
@@ -147,7 +147,7 @@ case "${1:-help}" in
     cli)
         cd packages/cli
         echo -e "${GREEN}Starting CLI in development mode...${NC}"
-        pnpm dev
+        bun run dev
         ;;
 
     all)
@@ -166,13 +166,13 @@ case "${1:-help}" in
 
     clean)
         echo -e "${BLUE}Cleaning build artifacts...${NC}"
-        pnpm -r run clean
+        bun run clean
         echo -e "${GREEN}Clean complete!${NC}"
         ;;
 
     build)
         echo -e "${BLUE}Building all TypeScript packages...${NC}"
-        pnpm build
+        bun run build
         echo -e "${GREEN}Build complete!${NC}"
         ;;
 

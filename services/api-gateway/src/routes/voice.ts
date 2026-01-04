@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import axios from 'axios';
 import multer from 'multer';
 
-const router = Router();
+const router: RouterType = Router();
 const VOICE_PROCESSING_URL = process.env.VOICE_PROCESSING_URL || 'http://localhost:8002';
 
 // Configure multer for audio file uploads

@@ -24,7 +24,7 @@ export const BriefingScreen: React.FC<BriefingScreenProps> = ({ serverUrl, token
           },
         });
 
-        const data = await response.json();
+        const data = await response.json() as { success: boolean; data?: DailyBriefing; error?: { message: string } };
 
         if (data.success && data.data) {
           setBriefing(data.data);

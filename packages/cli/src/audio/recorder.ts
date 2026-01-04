@@ -56,7 +56,10 @@ export class NodeAudioRecorder implements AudioRecorderAdapter {
       this.audioBuffer.push(chunk);
 
       if (this.dataCallback) {
-        this.dataCallback(chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength));
+        // Copy to a new ArrayBuffer to ensure it's not SharedArrayBuffer
+        const arrayBuffer = new ArrayBuffer(chunk.byteLength);
+        new Uint8Array(arrayBuffer).set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+        this.dataCallback(arrayBuffer);
       }
     });
 

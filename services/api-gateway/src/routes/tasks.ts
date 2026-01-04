@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import axios from 'axios';
 
-const router = Router();
+const router: RouterType = Router();
 const TASK_EXECUTION_URL = process.env.TASK_EXECUTION_URL || 'http://localhost:8007';
 
 // Proxy all task requests to the task execution service

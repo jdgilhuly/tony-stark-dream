@@ -18,23 +18,22 @@
   "author": "Daniel Gilhuly",
   "workspaces": [
     "packages/*",
-    "services/*"
+    "services/api-gateway",
+    "services/calendar-service"
   ],
   "scripts": {
-    "build": "pnpm -r build",
-    "clean": "pnpm -r clean",
-    "dev": "pnpm -r --parallel dev",
-    "lint": "pnpm -r lint",
-    "test": "pnpm -r test",
-    "cli": "pnpm --filter @jarvis/cli start",
-    "api-gateway": "pnpm --filter @jarvis/api-gateway start"
+    "build": "bun run --filter '*' build",
+    "clean": "bun run --filter '*' clean",
+    "dev": "bun run --filter '*' dev",
+    "lint": "bun run --filter '*' lint",
+    "test": "bun run --filter '*' test",
+    "cli": "bun run --filter @jarvis/cli start",
+    "api-gateway": "bun run --filter @jarvis/api-gateway start"
   },
   "devDependencies": {
     "typescript": "^5.3.3"
   },
-  "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=20.0.0"
   }
 }

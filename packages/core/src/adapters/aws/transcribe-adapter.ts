@@ -135,7 +135,7 @@ export class AWSTranscribeAdapter implements SpeechToTextAdapter {
       throw new Error(`Transcription failed: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as { text?: string; confidence?: number };
 
     return {
       text: data.text || '',

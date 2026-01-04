@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import axios from 'axios';
 
-const router = Router();
+const router: RouterType = Router();
 const NEWS_SERVICE_URL = process.env.NEWS_SERVICE_URL || 'http://localhost:8004';
 
 // Get top headlines

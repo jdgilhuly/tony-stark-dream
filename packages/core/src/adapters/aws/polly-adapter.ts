@@ -103,8 +103,8 @@ export class AWSPollyAdapter implements TextToSpeechAdapter {
         throw new Error(`Failed to fetch voices: ${response.statusText}`);
       }
 
-      const voices = await response.json();
-      return voices.map((v: { id: string }) => v.id);
+      const voices = await response.json() as { id: string }[];
+      return voices.map((v) => v.id);
     } catch {
       // Return default JARVIS-appropriate voices
       return ['Brian', 'Matthew', 'Joanna', 'Amy', 'Emma'];

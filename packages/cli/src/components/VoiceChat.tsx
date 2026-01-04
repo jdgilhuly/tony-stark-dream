@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
-import { AudioRecorder, createRecorder } from '../audio/recorder.js';
+import { NodeAudioRecorder } from '../audio/recorder.js';
+
+type AudioRecorder = NodeAudioRecorder;
 
 interface VoiceChatProps {
   serverUrl: string;
@@ -22,7 +24,7 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceCha
   const [audioLevel, setAudioLevel] = useState(0);
 
   useEffect(() => {
-    const rec = createRecorder();
+    const rec = new NodeAudioRecorder();
     setRecorder(rec);
     return () => {
       rec.stop();
@@ -38,11 +40,9 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceCha
     setError(null);
 
     try {
-      const audioData = await recorder.record({
-        sampleRate: 16000,
-        channels: 1,
-        onAudioLevel: (level) => setAudioLevel(level),
-      });
+      await recorder.start();
+      // Wait for user to stop recording
+      const audioData = await recorder.stop();
 
       setState('processing');
 
@@ -62,8 +62,9 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceCha
         throw new Error('Transcription failed');
       }
 
-      const { text } = await transcribeResponse.json();
-      setTranscript(text);
+      const transcribeData = await transcribeResponse.json() as { text: string };
+      setTranscript(transcribeData.text);
+      const text = transcribeData.text;
       onMessage?.(text);
 
       // Send to conversation service
@@ -80,7 +81,8 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceCha
         throw new Error('Conversation failed');
       }
 
-      const { response: jarvisResponse } = await chatResponse.json();
+      const chatData = await chatResponse.json() as { response: string };
+      const jarvisResponse = chatData.response;
       setResponse(jarvisResponse);
       onResponse?.(jarvisResponse);
 

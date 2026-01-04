@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 
-export const briefingRouter = Router();
+export const briefingRouter: RouterType = Router();
 
 // Mock briefing data (replace with actual service calls)
 const generateMockBriefing = (userId: string) => ({

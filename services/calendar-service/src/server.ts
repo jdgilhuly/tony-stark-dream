@@ -1,9 +1,11 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, Application } from 'express';
 import { google, calendar_v3 } from 'googleapis';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import Redis from 'ioredis';
 import winston from 'winston';
+
+const RedisClient = Redis.default ?? Redis;
 
 // Configuration
 const PORT = process.env.PORT ?? 8006;
@@ -25,7 +27,7 @@ const logger = winston.createLogger({
 });
 
 // Redis client
-const redis = new Redis(REDIS_URL);
+const redis = new RedisClient(REDIS_URL);
 
 // OAuth2 client
 const oauth2Client = new google.auth.OAuth2(
@@ -35,7 +37,7 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 // Express app
-const app = express();
+const app: Application = express();
 app.use(express.json());
 
 // Types

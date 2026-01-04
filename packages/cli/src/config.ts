@@ -1,6 +1,7 @@
 import Conf from 'conf';
+import type { AuthTokens } from '@jarvis/core';
 
-interface AuthTokens {
+interface StoredAuthTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
@@ -8,7 +9,7 @@ interface AuthTokens {
 
 interface ConfigSchema {
   serverUrl: string;
-  tokens: AuthTokens | null;
+  tokens: StoredAuthTokens | null;
   preferences: {
     voiceEnabled: boolean;
     wakeWord: string;
@@ -40,14 +41,23 @@ export class ConfigManager {
     const expiresAt = new Date(tokens.expiresAt);
     if (expiresAt <= new Date()) {
       // Token expired, should refresh
-      return tokens; // Return anyway, let the API handle refresh
+      // Return anyway, let the API handle refresh
     }
 
-    return tokens;
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt: new Date(tokens.expiresAt),
+    };
   }
 
   setTokens(tokens: AuthTokens): void {
-    this.config.set('tokens', tokens);
+    const storedTokens: StoredAuthTokens = {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt: tokens.expiresAt instanceof Date ? tokens.expiresAt.toISOString() : tokens.expiresAt,
+    };
+    this.config.set('tokens', storedTokens);
   }
 
   clearTokens(): void {

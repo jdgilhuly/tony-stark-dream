@@ -58,10 +58,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
         body: JSON.stringify({ email, password, name }),
       });
 
-      const data = await response.json();
+      const data = await response.json() as {
+        success: boolean;
+        data?: { tokens: { accessToken: string; refreshToken: string; expiresAt: string } };
+        error?: { message: string }
+      };
 
       if (data.success && data.data) {
-        onSuccess(data.data.tokens);
+        const tokens: AuthTokens = {
+          ...data.data.tokens,
+          expiresAt: new Date(data.data.tokens.expiresAt),
+        };
+        onSuccess(tokens);
         setStep('success');
         setTimeout(() => exit(), 1500);
       } else {

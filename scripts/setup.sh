@@ -34,7 +34,7 @@ echo ""
 MISSING=0
 
 check_command "node" || MISSING=1
-check_command "pnpm" || MISSING=1
+check_command "bun" || MISSING=1
 check_command "python3" || MISSING=1
 check_command "docker" || MISSING=1
 check_command "docker-compose" || MISSING=1
@@ -46,7 +46,7 @@ if [ $MISSING -eq 1 ]; then
     echo ""
     echo "Installation guides:"
     echo "  Node.js: https://nodejs.org/"
-    echo "  pnpm: npm install -g pnpm"
+    echo "  Bun: https://bun.sh/ (curl -fsSL https://bun.sh/install | bash)"
     echo "  Python: https://python.org/"
     echo "  Docker: https://docker.com/"
     exit 1
@@ -69,11 +69,11 @@ fi
 
 echo ""
 echo "Installing Node.js dependencies..."
-pnpm install
+bun install
 
 echo ""
 echo "Building TypeScript packages..."
-pnpm build
+bun run build
 
 echo ""
 echo "Setting up Python virtual environments for services..."

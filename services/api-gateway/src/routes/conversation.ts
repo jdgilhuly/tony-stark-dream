@@ -1,9 +1,10 @@
 import { Router, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 
-export const conversationRouter = Router();
+export const conversationRouter: RouterType = Router();
 
 // In-memory conversation store (replace with database)
 const conversations = new Map<string, {
