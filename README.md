@@ -72,7 +72,7 @@ All core features have been implemented and the system is ready for deployment.
 
 - Node.js 20+
 - Python 3.11+
-- pnpm 9+
+- Bun (for package management)
 - Docker & Docker Compose
 
 ### Installation
@@ -86,8 +86,8 @@ cd tony-stark-dream
 ./scripts/setup.sh
 
 # Or manually:
-pnpm install
-pnpm build
+bun install
+bun run build
 docker-compose -f docker-compose.dev.yml up -d
 ```
 
@@ -122,19 +122,19 @@ docker-compose up
 
 ```bash
 # Login
-pnpm --filter @jarvis/cli dev login
+bun run --filter @jarvis/cli dev login
 
 # Start conversation
-pnpm --filter @jarvis/cli dev chat
+bun run --filter @jarvis/cli dev chat
 
 # Voice mode
-pnpm --filter @jarvis/cli dev voice
+bun run --filter @jarvis/cli dev voice
 
 # Get daily briefing
-pnpm --filter @jarvis/cli dev briefing
+bun run --filter @jarvis/cli dev briefing
 
 # Open dashboard
-pnpm --filter @jarvis/cli dev dashboard
+bun run --filter @jarvis/cli dev dashboard
 ```
 
 ## Project Structure
@@ -223,7 +223,7 @@ JARVIS: Certainly, sir. Here's your briefing for today:
 
 ```bash
 # TypeScript tests
-pnpm test
+bun run test
 
 # Python tests
 pytest
