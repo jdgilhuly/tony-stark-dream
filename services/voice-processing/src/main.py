@@ -16,6 +16,8 @@ from .config import get_settings
 from .transcribe import get_transcribe_client, TranscribeClient
 from .polly import get_polly_client, PollyClient, JARVIS_VOICE_PRESETS
 from .streaming import handle_voice_websocket
+from .wake_word import get_wake_word_service, WakeWordService, WakeWordEvent
+from .wake_word_streaming import handle_wake_word_websocket
 
 # Configure logging
 logging.basicConfig(
@@ -37,8 +39,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="JARVIS Voice Processing Service",
-    description="Speech-to-text and text-to-speech processing with AWS Transcribe and Polly",
-    version="0.1.0",
+    description="Speech-to-text and text-to-speech processing with local Whisper and pyttsx3",
+    version="0.2.0",
     lifespan=lifespan
 )
 
@@ -256,6 +258,73 @@ async def list_presets():
     }
 
 
+# Wake Word Detection Endpoints
+class WakeWordStatusResponse(BaseModel):
+    is_listening: bool
+    threshold: float
+    refractory_period_ms: int
+    models: list[str]
+
+
+class WakeWordConfigRequest(BaseModel):
+    threshold: Optional[float] = None
+    refractory_period_ms: Optional[int] = None
+
+
+@app.get("/wake-word/status", response_model=WakeWordStatusResponse)
+async def get_wake_word_status():
+    """Get current wake word detection status."""
+    service = get_wake_word_service()
+    status = service.get_status()
+    return WakeWordStatusResponse(**status)
+
+
+@app.post("/wake-word/start")
+async def start_wake_word_detection(
+    user: dict = Depends(get_current_user)
+):
+    """Start wake word detection. This initializes always-on listening."""
+    service = get_wake_word_service()
+    try:
+        await service.initialize()
+        logger.info(f"Wake word detection started for user {user['user_id']}")
+        return {"status": "started", "message": "Wake word detection active. Say 'Hey JARVIS' to activate."}
+    except Exception as e:
+        logger.error(f"Failed to start wake word detection: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start wake word detection: {str(e)}")
+
+
+@app.post("/wake-word/stop")
+async def stop_wake_word_detection(
+    user: dict = Depends(get_current_user)
+):
+    """Stop wake word detection."""
+    service = get_wake_word_service()
+    await service.stop_listening()
+    logger.info(f"Wake word detection stopped for user {user['user_id']}")
+    return {"status": "stopped", "message": "Wake word detection stopped."}
+
+
+@app.put("/wake-word/config")
+async def update_wake_word_config(
+    config: WakeWordConfigRequest,
+    user: dict = Depends(get_current_user)
+):
+    """Update wake word detection configuration."""
+    service = get_wake_word_service()
+
+    if config.threshold is not None:
+        service.detector.set_threshold(config.threshold)
+
+    if config.refractory_period_ms is not None:
+        service.detector.set_refractory_period(config.refractory_period_ms)
+
+    return {
+        "status": "updated",
+        "config": service.get_status()
+    }
+
+
 def get_user_from_token(token: str) -> Optional[dict]:
     """Extract user from JWT token without raising exceptions."""
     try:
@@ -267,6 +336,42 @@ def get_user_from_token(token: str) -> Optional[dict]:
         return {"user_id": payload.get("userId")}
     except JWTError:
         return None
+
+
+@app.websocket("/ws/wake-word")
+async def wake_word_websocket(websocket: WebSocket, token: str = None):
+    """
+    WebSocket endpoint for wake word detection streaming.
+
+    Protocol:
+    - Connect with token query parameter for authentication
+    - Send {"type": "config", "threshold": 0.5} to configure
+    - Send binary audio chunks (16-bit PCM, 16kHz, mono)
+    - Receive {"type": "wake_word_detected", "wake_word": "...", "confidence": 0.9}
+    """
+    # Authenticate
+    if not token:
+        await websocket.close(code=4001, reason="Missing authentication token")
+        return
+
+    user = get_user_from_token(token)
+    if not user:
+        await websocket.close(code=4001, reason="Invalid authentication token")
+        return
+
+    await websocket.accept()
+
+    try:
+        await handle_wake_word_websocket(websocket, user["user_id"])
+    except WebSocketDisconnect:
+        logger.info(f"Wake word WebSocket disconnected for user {user['user_id']}")
+    except Exception as e:
+        logger.error(f"Wake word WebSocket error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except:
+            pass
 
 
 @app.websocket("/ws/voice")

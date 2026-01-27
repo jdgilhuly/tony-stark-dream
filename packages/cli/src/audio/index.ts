@@ -15,3 +15,7 @@ export { LatencyTracker } from './latency-tracker.js';
 export type { LatencyMetrics, LatencyStatistics } from './latency-tracker.js';
 export { MockAudioRecorder } from './mock-recorder.js';
 export type { MockRecorderOptions } from './mock-recorder.js';
+export { WakeWordDetector, createWakeWordDetector } from './wake-word.js';
+export type { WakeWordConfig, WakeWordEvent, WakeWordStatus } from './wake-word.js';
+export { NodeWakeWordDetector, LocalWakeWordDetector } from './node-wake-word.js';
+export type { NodeWakeWordConfig, WakeWordDetection } from './node-wake-word.js';
