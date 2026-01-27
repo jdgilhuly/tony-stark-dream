@@ -1,3 +1,17 @@
 export { NodeAudioRecorder, NodeAudioPlayer, createCliAudioAdapters } from './recorder.js';
 export { AudioPlayer, Mp3Player, VoiceOutput, getVoiceOutput } from './player.js';
 export type { AudioPlayerOptions, PlaybackResult } from './player.js';
+export { DeepgramClient } from './deepgram.js';
+export type { DeepgramConfig, TranscriptEvent } from './deepgram.js';
+export { VoiceActivityDetector } from './vad.js';
+export type { VADConfig, VADEvent } from './vad.js';
+export { ElevenLabsClient } from './elevenlabs.js';
+export type { ElevenLabsConfig } from './elevenlabs.js';
+export { AudioQueue } from './audio-queue.js';
+export type { AudioQueueConfig } from './audio-queue.js';
+export { VoicePipeline } from './voice-pipeline.js';
+export type { VoicePipelineConfig, VoicePipelineState } from './voice-pipeline.js';
+export { LatencyTracker } from './latency-tracker.js';
+export type { LatencyMetrics, LatencyStatistics } from './latency-tracker.js';
+export { MockAudioRecorder } from './mock-recorder.js';
+export type { MockRecorderOptions } from './mock-recorder.js';

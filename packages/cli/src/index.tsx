@@ -7,14 +7,23 @@ import { BriefingScreen } from './components/BriefingScreen.js';
 import { Dashboard } from './components/Dashboard.js';
 import { VoiceChat } from './components/VoiceChat.js';
 import { ConfigManager } from './config.js';
+import { MockAudioRecorder } from './audio/mock-recorder.js';
 
 const program = new Command();
 const config = new ConfigManager();
 
+// Global option for TTY bypass
+program.option('--no-tty-check', 'Skip TTY check for automated testing');
+
 function ensureInteractiveTerminal() {
+  const opts = program.opts();
+  if (opts.noTtyCheck || opts.ttyCheck === false) {
+    return;
+  }
   if (!process.stdin.isTTY) {
     console.error('Error: This command requires an interactive terminal.');
     console.error('Please run directly in a terminal, not through a script or pipe.');
+    console.error('For automated testing, use --no-tty-check flag.');
     process.exit(1);
   }
 }
@@ -154,6 +163,44 @@ program
         tokens={tokens}
         onMessage={(msg) => console.log(`You said: ${msg}`)}
         onResponse={(res) => console.log(`JARVIS: ${res}`)}
+      />
+    );
+  });
+
+program
+  .command('voice-test')
+  .description('Test voice interface with mock audio (no microphone required)')
+  .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
+  .option('-f, --audio-file <path>', 'Audio file to use as input')
+  .option('--auto-stop <ms>', 'Auto-stop after N milliseconds', '5000')
+  .action(async (options) => {
+    // No TTY check needed for test mode
+    const tokens = config.getTokens();
+
+    if (!tokens) {
+      console.log('Please login first: jarvis login');
+      process.exit(1);
+    }
+
+    const autoStopMs = parseInt(options.autoStop, 10);
+    const mockRecorder = new MockAudioRecorder({
+      autoStopMs,
+      audioFile: options.audioFile,
+    });
+
+    console.log('Starting voice test mode...');
+    console.log(`Auto-stop in ${autoStopMs}ms`);
+    if (options.audioFile) {
+      console.log(`Using audio file: ${options.audioFile}`);
+    }
+
+    render(
+      <VoiceChat
+        serverUrl={options.server}
+        tokens={tokens}
+        recorder={mockRecorder}
+        onMessage={(msg) => console.log(`[Test] Transcribed: ${msg}`)}
+        onResponse={(res) => console.log(`[Test] JARVIS: ${res}`)}
       />
     );
   });

@@ -1,35 +1,45 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
+import type { AudioRecorderAdapter } from '@jarvis/core';
 import { NodeAudioRecorder } from '../audio/recorder.js';
-
-type AudioRecorder = NodeAudioRecorder;
+import { VoiceActivityDetector } from '../audio/vad.js';
 
 interface VoiceChatProps {
   serverUrl: string;
   tokens: { accessToken: string; refreshToken: string };
   onMessage?: (message: string) => void;
   onResponse?: (response: string) => void;
+  recorder?: AudioRecorderAdapter;
 }
 
 type VoiceState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
 
-export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceChatProps) {
+export function VoiceChat({ serverUrl, tokens, onMessage, onResponse, recorder: injectedRecorder }: VoiceChatProps) {
   const { exit } = useApp();
   const [state, setState] = useState<VoiceState>('idle');
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [recorder, setRecorder] = useState<AudioRecorder | null>(null);
+  const [recorder, setRecorder] = useState<AudioRecorderAdapter | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
+  const [partialTranscript, setPartialTranscript] = useState('');
+  const [vad] = useState(() => new VoiceActivityDetector());
 
   useEffect(() => {
-    const rec = new NodeAudioRecorder();
+    // Use injected recorder if provided, otherwise create a new one
+    const rec = injectedRecorder ?? new NodeAudioRecorder();
     setRecorder(rec);
+
+    // Set up VAD level callback
+    vad.on('level', (level) => {
+      setAudioLevel(level);
+    });
+
     return () => {
       rec.stop();
     };
-  }, []);
+  }, [vad, injectedRecorder]);
 
   const startListening = useCallback(async () => {
     if (!recorder) return;
@@ -126,10 +136,31 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceCha
     }
   });
 
-  const renderAudioLevel = () => {
-    const bars = Math.round(audioLevel * 20);
-    return '█'.repeat(bars) + '░'.repeat(20 - bars);
-  };
+  const renderAudioLevel = useMemo(() => {
+    const totalBars = 20;
+    const filledBars = Math.round(audioLevel * totalBars);
+    const emptyBars = totalBars - filledBars;
+
+    // Color-coded level indicator
+    let color: string;
+    if (audioLevel < 0.3) {
+      color = 'green';
+    } else if (audioLevel < 0.7) {
+      color = 'yellow';
+    } else {
+      color = 'red';
+    }
+
+    return { bars: '█'.repeat(filledBars) + '░'.repeat(emptyBars), color };
+  }, [audioLevel]);
+
+  const renderWaveform = useMemo(() => {
+    // Create a simple waveform visualization
+    const chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    const level = Math.min(1, audioLevel);
+    const idx = Math.floor(level * (chars.length - 1));
+    return chars[idx];
+  }, [audioLevel]);
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -163,7 +194,8 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceCha
             <Text color="green">
               <Spinner type="dots" /> Listening...
             </Text>
-            <Text> {renderAudioLevel()}</Text>
+            <Text color={renderAudioLevel.color as any}> {renderAudioLevel.bars}</Text>
+            <Text> {renderWaveform}</Text>
           </>
         )}
         {state === 'processing' && (
@@ -172,12 +204,21 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse }: VoiceCha
           </Text>
         )}
         {state === 'speaking' && (
-          <Text color="blue">
-            <Spinner type="dots" /> Speaking...
-          </Text>
+          <>
+            <Text color="blue">
+              <Spinner type="dots" /> Speaking...
+            </Text>
+            <Text dimColor> (Press SPACE to interrupt)</Text>
+          </>
         )}
         {state === 'error' && <Text color="red">Error: {error}</Text>}
       </Box>
+
+      {partialTranscript && state === 'listening' && (
+        <Box marginBottom={1}>
+          <Text dimColor italic>Hearing: {partialTranscript}</Text>
+        </Box>
+      )}
 
       {transcript && (
         <Box marginBottom={1}>

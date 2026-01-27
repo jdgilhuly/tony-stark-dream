@@ -36,12 +36,14 @@ export class NodeAudioRecorder implements AudioRecorderAdapter {
     }
 
     // Dynamic import to avoid issues in environments without the package
-    const record = await import('node-record-lpcm16');
+    // Handle CommonJS default export pattern
+    const recordModule = await import('node-record-lpcm16');
+    const recordFn = (recordModule as any).default || (recordModule as any).record || recordModule;
 
     this.audioBuffer = [];
     this.recording = true;
 
-    this.recordInstance = record.record({
+    this.recordInstance = recordFn({
       sampleRate: this.options.sampleRate,
       channels: this.options.channels,
       threshold: this.options.threshold,

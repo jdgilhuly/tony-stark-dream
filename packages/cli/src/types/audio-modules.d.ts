@@ -13,7 +13,10 @@ declare module 'node-record-lpcm16' {
     stop(): void;
   }
 
-  export function record(options?: RecordOptions): Recording;
+  function record(options?: RecordOptions): Recording;
+
+  export default record;
+  export { record, RecordOptions, Recording };
 }
 
 declare module 'play-sound' {
