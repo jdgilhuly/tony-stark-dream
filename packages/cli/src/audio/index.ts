@@ -19,3 +19,6 @@ export { WakeWordDetector, createWakeWordDetector } from './wake-word.js';
 export type { WakeWordConfig, WakeWordEvent, WakeWordStatus } from './wake-word.js';
 export { NodeWakeWordDetector, LocalWakeWordDetector } from './node-wake-word.js';
 export type { NodeWakeWordConfig, WakeWordDetection } from './node-wake-word.js';
+export { RealtimeVoicePipeline, createRealtimeVoicePipeline } from './realtime-voice.js';
+export type { RealtimeVoiceConfig, RealtimeVoiceState, ConversationTurn } from './realtime-voice.js';
+export { ELEVENLABS_MODELS } from './elevenlabs.js';
