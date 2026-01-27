@@ -7,7 +7,7 @@ Provides Claude Code-like capabilities: file operations, git, code search.
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,12 @@ from jose import jwt, JWTError
 from .config import get_settings
 from .file_ops import FileOperations, FileInfo, FileContent, SearchMatch
 from .git_ops import GitOperations, GitStatus, CommitInfo, FileDiff, BranchInfo
+from .execution import (
+    CodeExecutor, DockerExecutor,
+    ExecutionRequest, ExecutionConfig, ExecutionResult,
+    ExecutionLanguage, ExecutionStatus,
+    get_code_executor, get_docker_executor,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -651,6 +657,200 @@ async def git_stash_pop(user: dict = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Git stash pop error: {e}")
         raise HTTPException(status_code=500, detail="Failed to pop stash")
+
+
+# Code Execution Endpoints
+class ExecuteCodeRequest(BaseModel):
+    code: str
+    language: str  # python, javascript, typescript, shell, bash
+    timeout_seconds: int = 30
+    max_memory_mb: int = 512
+    allow_network: bool = False
+    env_vars: Dict[str, str] = {}
+    files: Dict[str, str] = {}  # additional files
+
+
+class ExecuteShellRequest(BaseModel):
+    command: str
+    working_dir: Optional[str] = None
+    timeout_seconds: int = 30
+    env_vars: Dict[str, str] = {}
+
+
+class ExecutionResultResponse(BaseModel):
+    id: str
+    status: str
+    exit_code: Optional[int]
+    stdout: str
+    stderr: str
+    duration_ms: int
+    language: str
+    started_at: str
+    completed_at: Optional[str]
+    error_message: Optional[str]
+
+
+@app.post("/execute/code", response_model=ExecutionResultResponse)
+async def execute_code(
+    request: ExecuteCodeRequest,
+    user: dict = Depends(get_current_user),
+    use_docker: bool = False,
+):
+    """
+    Execute code in a sandboxed environment.
+
+    Supports: python, javascript, typescript, shell, bash, zsh
+    """
+    try:
+        # Parse language
+        try:
+            language = ExecutionLanguage(request.language.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported language: {request.language}. "
+                       f"Supported: {[l.value for l in ExecutionLanguage]}"
+            )
+
+        # Build config
+        config = ExecutionConfig(
+            timeout_seconds=min(request.timeout_seconds, 300),  # Max 5 min
+            max_memory_mb=min(request.max_memory_mb, 1024),  # Max 1GB
+            allow_network=request.allow_network,
+            env_vars=request.env_vars,
+        )
+
+        # Build request
+        exec_request = ExecutionRequest(
+            code=request.code,
+            language=language,
+            config=config,
+            files=request.files,
+        )
+
+        # Get executor
+        if use_docker:
+            executor = get_docker_executor()
+            if executor is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Docker executor not available"
+                )
+        else:
+            executor = get_code_executor()
+
+        # Execute
+        result = await executor.execute(exec_request)
+
+        logger.info(
+            f"Code execution completed",
+            extra={
+                "user_id": user["user_id"],
+                "language": language.value,
+                "status": result.status.value,
+                "duration_ms": result.duration_ms,
+            }
+        )
+
+        return ExecutionResultResponse(
+            id=result.id,
+            status=result.status.value,
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_ms=result.duration_ms,
+            language=result.language.value,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            error_message=result.error_message,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Code execution error: {e}")
+        raise HTTPException(status_code=500, detail="Code execution failed")
+
+
+@app.post("/execute/shell", response_model=ExecutionResultResponse)
+async def execute_shell(
+    request: ExecuteShellRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Execute a shell command."""
+    try:
+        config = ExecutionConfig(
+            timeout_seconds=min(request.timeout_seconds, 300),
+            env_vars=request.env_vars,
+            working_dir=request.working_dir,
+        )
+
+        executor = get_code_executor()
+        result = await executor.execute_shell(
+            request.command,
+            config,
+            request.working_dir,
+        )
+
+        logger.info(
+            f"Shell execution completed",
+            extra={
+                "user_id": user["user_id"],
+                "command": request.command[:50],
+                "status": result.status.value,
+                "duration_ms": result.duration_ms,
+            }
+        )
+
+        return ExecutionResultResponse(
+            id=result.id,
+            status=result.status.value,
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_ms=result.duration_ms,
+            language=result.language.value,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            error_message=result.error_message,
+        )
+
+    except Exception as e:
+        logger.error(f"Shell execution error: {e}")
+        raise HTTPException(status_code=500, detail="Shell execution failed")
+
+
+@app.post("/execute/cancel/{execution_id}")
+async def cancel_execution(
+    execution_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Cancel a running execution."""
+    executor = get_code_executor()
+    cancelled = await executor.cancel(execution_id)
+
+    if cancelled:
+        return {"status": "cancelled", "execution_id": execution_id}
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Execution {execution_id} not found or already completed"
+        )
+
+
+@app.get("/execute/languages")
+async def list_supported_languages():
+    """List supported execution languages."""
+    return {
+        "languages": [
+            {
+                "id": lang.value,
+                "name": lang.name,
+                "extensions": [CodeExecutor.LANGUAGE_EXTENSIONS.get(lang, ".txt")],
+            }
+            for lang in ExecutionLanguage
+        ]
+    }
 
 
 if __name__ == "__main__":
