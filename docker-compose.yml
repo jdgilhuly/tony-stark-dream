@@ -61,6 +61,14 @@ services:
       TASK_EXECUTION_URL: http://task-execution:8007
       NOTIFICATION_SERVICE_URL: http://notification-service:8008
       USER_PROFILE_URL: http://user-profile:8009
+      CODE_SERVICE_URL: http://code-service:8010
+      MEMORY_SERVICE_URL: http://memory-service:8011
+      BROWSER_SERVICE_URL: http://browser-service:8012
+      CLAUDE_SERVICE_URL: http://claude-service:8013
+      RESEARCH_SERVICE_URL: http://research-service:8014
+      GITHUB_SERVICE_URL: http://github-service:8015
+      ORCHESTRATION_SERVICE_URL: http://orchestration-service:8016
+      LEARNING_SERVICE_URL: http://learning-service:8017
       CORS_ORIGIN: "*"
     depends_on:
       postgres:
@@ -323,9 +331,239 @@ services:
     networks:
       - jarvis-network
 
+  # Code Service
+  code-service:
+    build:
+      context: ./services/code-service
+      dockerfile: Dockerfile
+    container_name: jarvis-code-service
+    ports:
+      - "8010:8010"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8010
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      SANDBOX_MODE: "true"
+      MAX_FILE_SIZE_MB: 10
+      ALLOWED_PATHS: /tmp,/workspace
+    volumes:
+      - code_workspace:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Memory Service
+  memory-service:
+    build:
+      context: ./services/memory-service
+      dockerfile: Dockerfile
+    container_name: jarvis-memory-service
+    ports:
+      - "8011:8011"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8011
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      CHROMA_PERSIST_DIR: /data/chroma
+      EMBEDDING_MODEL: all-MiniLM-L6-v2
+    volumes:
+      - memory_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Browser Service
+  browser-service:
+    build:
+      context: ./services/browser-service
+      dockerfile: Dockerfile
+    container_name: jarvis-browser-service
+    ports:
+      - "8012:8012"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8012
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      HEADLESS: "true"
+      MAX_SESSIONS: 5
+    volumes:
+      - browser_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8012/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Claude Service
+  claude-service:
+    build:
+      context: ./services/claude-service
+      dockerfile: Dockerfile
+    container_name: jarvis-claude-service
+    ports:
+      - "8013:8013"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8013
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: claude-3-5-sonnet-20241022
+      OLLAMA_BASE_URL: http://ollama:11434
+      FALLBACK_TO_OLLAMA: "true"
+      CODE_SERVICE_URL: http://code-service:8010
+      BROWSER_SERVICE_URL: http://browser-service:8012
+      MEMORY_SERVICE_URL: http://memory-service:8011
+    depends_on:
+      code-service:
+        condition: service_started
+      browser-service:
+        condition: service_started
+      memory-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8013/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Research Service
+  research-service:
+    build:
+      context: ./services/research-service
+      dockerfile: Dockerfile
+    container_name: jarvis-research-service
+    ports:
+      - "8014:8014"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8014
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      SEARCH_PROVIDER: duckduckgo
+      SERPAPI_KEY: ${SERPAPI_KEY:-}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      KNOWLEDGE_DB_PATH: /data/knowledge.db
+    volumes:
+      - research_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8014/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # GitHub Service
+  github-service:
+    build:
+      context: ./services/github-service
+      dockerfile: Dockerfile
+    container_name: jarvis-github-service
+    ports:
+      - "8015:8015"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8015
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8015/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Orchestration Service
+  orchestration-service:
+    build:
+      context: ./services/orchestration-service
+      dockerfile: Dockerfile
+    container_name: jarvis-orchestration-service
+    ports:
+      - "8016:8016"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8016
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      CLAUDE_SERVICE_URL: http://claude-service:8013
+      CODE_SERVICE_URL: http://code-service:8010
+      BROWSER_SERVICE_URL: http://browser-service:8012
+      MEMORY_SERVICE_URL: http://memory-service:8011
+      RESEARCH_SERVICE_URL: http://research-service:8014
+      GITHUB_SERVICE_URL: http://github-service:8015
+      MAX_PARALLEL_TASKS: 5
+      TASK_TIMEOUT: 300
+    depends_on:
+      claude-service:
+        condition: service_started
+      code-service:
+        condition: service_started
+      browser-service:
+        condition: service_started
+      memory-service:
+        condition: service_started
+      research-service:
+        condition: service_started
+      github-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8016/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
+  # Learning Service
+  learning-service:
+    build:
+      context: ./services/learning-service
+      dockerfile: Dockerfile
+    container_name: jarvis-learning-service
+    ports:
+      - "8017:8017"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8017
+      JWT_SECRET: ${JWT_SECRET:-development-secret-change-in-production}
+      MEMORY_SERVICE_URL: http://memory-service:8011
+      CLAUDE_SERVICE_URL: http://claude-service:8013
+      DB_PATH: /data/learning.db
+      REFLECTION_INTERVAL_HOURS: 24
+    volumes:
+      - learning_data:/data
+    depends_on:
+      memory-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8017/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - jarvis-network
+
 volumes:
   postgres_data:
   redis_data:
+  code_workspace:
+  memory_data:
+  browser_data:
+  research_data:
+  learning_data:
 
 networks:
   jarvis-network:
