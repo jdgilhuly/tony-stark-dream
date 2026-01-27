@@ -21,6 +21,12 @@ import voiceRouter from './routes/voice.js';
 import calendarRouter from './routes/calendar.js';
 import weatherRouter from './routes/weather.js';
 import newsRouter from './routes/news.js';
+import { memoryRouter } from './routes/memory.js';
+import { browserRouter } from './routes/browser.js';
+import { claudeRouter } from './routes/claude.js';
+import { researchRouter } from './routes/research.js';
+import { githubRouter } from './routes/github.js';
+import { orchestrationRouter } from './routes/orchestration.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { authenticate, optionalAuth } from './middleware/auth.js';
@@ -70,6 +76,21 @@ app.use('/voice', voiceRouter);
 app.use('/calendar', calendarRouter);
 app.use('/weather', weatherRouter);
 app.use('/news', newsRouter);
+
+// New AI/automation service routes
+app.use('/memory', memoryRouter);
+app.use('/browser', browserRouter);
+app.use('/claude', claudeRouter);
+app.use('/research', researchRouter);
+app.use('/github', githubRouter);
+app.use('/orchestration', orchestrationRouter);
+
+// Convenience alias for natural language tasks
+app.post('/do', (req, res, next) => {
+  // Forward to orchestration service's /do endpoint
+  req.url = '/orchestration/do';
+  orchestrationRouter(req, res, next);
+});
 
 // Error handling
 app.use(errorHandler);
