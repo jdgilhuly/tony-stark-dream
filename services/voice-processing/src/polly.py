@@ -1,13 +1,12 @@
-"""Local text-to-speech using pyttsx3."""
+"""Local text-to-speech using espeak-ng directly."""
 
 import asyncio
 import logging
 import tempfile
+import subprocess
 import os
 import re
 from typing import Optional
-
-import pyttsx3
 
 from .config import get_settings
 
@@ -16,19 +15,36 @@ settings = get_settings()
 
 
 class PollyClient:
-    """Client for local text-to-speech synthesis using pyttsx3."""
+    """Client for local text-to-speech synthesis using espeak-ng."""
 
     def __init__(self):
-        logger.info("Initializing pyttsx3 TTS engine")
-        self.engine = pyttsx3.init()
-        self.engine.setProperty('rate', settings.tts_rate)
+        logger.info("Initializing espeak-ng TTS engine")
+        self.rate = settings.tts_rate
+        self.voice = "en-gb"  # Default British English voice (JARVIS-like)
 
         # Get available voices
-        self.voices = self.engine.getProperty('voices')
-        if self.voices and settings.tts_voice_index < len(self.voices):
-            self.engine.setProperty('voice', self.voices[settings.tts_voice_index].id)
+        try:
+            result = subprocess.run(
+                ["espeak-ng", "--voices"],
+                capture_output=True,
+                text=True
+            )
+            # Parse voices from output
+            lines = result.stdout.strip().split('\n')[1:]  # Skip header
+            self.voices = []
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 4:
+                    self.voices.append({
+                        "id": parts[4] if len(parts) > 4 else parts[1],
+                        "name": parts[4] if len(parts) > 4 else parts[1],
+                        "language": parts[1]
+                    })
+        except Exception as e:
+            logger.warning(f"Could not list voices: {e}")
+            self.voices = [{"id": "en", "name": "English", "language": "en"}]
 
-        logger.info(f"pyttsx3 initialized with {len(self.voices)} voices available")
+        logger.info(f"espeak-ng initialized with {len(self.voices)} voices available")
 
     def _strip_ssml(self, text: str) -> str:
         """Remove SSML tags from text since pyttsx3 doesn't support SSML."""
@@ -47,13 +63,13 @@ class PollyClient:
         sample_rate: str = None
     ) -> dict:
         """
-        Synthesize speech from text.
+        Synthesize speech from text using espeak-ng.
 
         Args:
             text: Text to synthesize (SSML tags will be stripped)
-            voice_id: Voice index as string (optional)
+            voice_id: Voice name (optional)
             output_format: Output format (only wav supported locally)
-            engine: Ignored (pyttsx3 uses system TTS)
+            engine: Ignored
             sample_rate: Ignored
 
         Returns:
@@ -65,30 +81,16 @@ class PollyClient:
         if not clean_text:
             raise ValueError("Text is empty after processing")
 
-        # Set voice if specified
-        if voice_id:
-            try:
-                voice_idx = int(voice_id)
-                if 0 <= voice_idx < len(self.voices):
-                    self.engine.setProperty('voice', self.voices[voice_idx].id)
-            except (ValueError, IndexError):
-                pass  # Keep current voice
-
-        # Create temp file for audio output
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            temp_path = f.name
+        # Select voice
+        voice = voice_id if voice_id else self.voice
 
         try:
-            # Run TTS in thread pool to avoid blocking
+            # Run espeak-ng in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
+            audio_data = await loop.run_in_executor(
                 None,
-                lambda: self._synthesize_to_file(clean_text, temp_path)
+                lambda: self._synthesize_with_espeak(clean_text, voice)
             )
-
-            # Read the audio file
-            with open(temp_path, 'rb') as f:
-                audio_data = f.read()
 
             logger.info(
                 f"Synthesized speech",
@@ -102,7 +104,7 @@ class PollyClient:
                 "audio_data": audio_data,
                 "content_type": "audio/wav",
                 "request_characters": len(clean_text),
-                "voice_id": str(settings.tts_voice_index),
+                "voice_id": voice,
                 "format": "wav"
             }
 
@@ -110,17 +112,24 @@ class PollyClient:
             logger.error(f"TTS synthesis error: {e}")
             raise
 
-        finally:
-            # Cleanup temp file
-            try:
-                os.unlink(temp_path)
-            except Exception:
-                pass
+    def _synthesize_with_espeak(self, text: str, voice: str) -> bytes:
+        """Synchronous helper to synthesize text using espeak-ng."""
+        # Use espeak-ng to output WAV to stdout
+        result = subprocess.run(
+            [
+                "espeak-ng",
+                "-v", voice,
+                "-s", str(self.rate),
+                "--stdout",
+                text
+            ],
+            capture_output=True
+        )
 
-    def _synthesize_to_file(self, text: str, filepath: str):
-        """Synchronous helper to synthesize text to file."""
-        self.engine.save_to_file(text, filepath)
-        self.engine.runAndWait()
+        if result.returncode != 0:
+            raise RuntimeError(f"espeak-ng failed: {result.stderr.decode()}")
+
+        return result.stdout
 
     async def synthesize_speech_ssml(
         self,
@@ -156,7 +165,7 @@ class PollyClient:
         engine: str = None
     ) -> list[dict]:
         """
-        List available system voices.
+        List available espeak-ng voices.
 
         Args:
             language_code: Filter by language (optional, partial match)
@@ -167,17 +176,16 @@ class PollyClient:
         """
         result = []
         for i, voice in enumerate(self.voices):
-            # Extract language from voice properties
-            voice_lang = getattr(voice, 'languages', ['en'])[0] if hasattr(voice, 'languages') else 'en'
+            voice_lang = voice.get("language", "en")
 
             # Filter by language if specified
             if language_code and language_code.lower() not in voice_lang.lower():
                 continue
 
             result.append({
-                "id": str(i),
-                "name": voice.name,
-                "gender": getattr(voice, 'gender', 'unknown'),
+                "id": voice.get("id", str(i)),
+                "name": voice.get("name", f"Voice {i}"),
+                "gender": "unknown",
                 "language_code": voice_lang,
                 "language_name": voice_lang,
                 "supported_engines": ["local"]
@@ -194,13 +202,13 @@ class PollyClient:
         """
         Create SSML-like markup (will be stripped before synthesis).
 
-        Note: This is kept for API compatibility but pyttsx3 doesn't use SSML.
-        The rate adjustment is applied via engine settings instead.
+        Note: This is kept for API compatibility but espeak-ng doesn't use SSML.
+        The rate adjustment is applied via espeak-ng -s flag instead.
 
         Args:
             text: Plain text
             emphasis: Ignored
-            rate: Speaking rate (adjusts engine rate)
+            rate: Speaking rate (adjusts espeak rate)
 
         Returns:
             Original text (SSML wrapper is ignored)
@@ -212,33 +220,33 @@ class PollyClient:
             "fast": 200
         }
         if rate in rate_map:
-            self.engine.setProperty('rate', rate_map[rate])
+            self.rate = rate_map[rate]
 
         return text
 
 
-# JARVIS voice presets (adapted for local TTS)
+# JARVIS voice presets (adapted for espeak-ng)
 JARVIS_VOICE_PRESETS = {
     "default": {
-        "voice_id": "0",
+        "voice_id": "en-gb",  # British English (JARVIS-like)
         "engine": "local",
         "rate": "medium",
         "emphasis": "moderate"
     },
     "urgent": {
-        "voice_id": "0",
+        "voice_id": "en-gb",
         "engine": "local",
         "rate": "fast",
         "emphasis": "strong"
     },
     "calm": {
-        "voice_id": "0",
+        "voice_id": "en-gb",
         "engine": "local",
         "rate": "slow",
         "emphasis": "reduced"
     },
     "formal": {
-        "voice_id": "0",
+        "voice_id": "en-gb-x-rp",  # Received Pronunciation
         "engine": "local",
         "rate": "medium",
         "emphasis": "moderate"

@@ -15,9 +15,21 @@ from jose import jwt, JWTError
 from .config import get_settings
 from .transcribe import get_transcribe_client, TranscribeClient
 from .polly import get_polly_client, PollyClient, JARVIS_VOICE_PRESETS
-from .streaming import handle_voice_websocket
 from .wake_word import get_wake_word_service, WakeWordService, WakeWordEvent
 from .wake_word_streaming import handle_wake_word_websocket
+
+# Lazy import for streaming module (requires boto3 which may not be installed)
+handle_voice_websocket = None
+def _get_voice_websocket_handler():
+    global handle_voice_websocket
+    if handle_voice_websocket is None:
+        try:
+            from .streaming import handle_voice_websocket as handler
+            handle_voice_websocket = handler
+        except ImportError as e:
+            logging.getLogger(__name__).warning(f"Voice streaming not available: {e}")
+            handle_voice_websocket = None
+    return handle_voice_websocket
 
 # Configure logging
 logging.basicConfig(
@@ -397,6 +409,12 @@ async def voice_websocket(websocket: WebSocket, token: str = None):
     - Receive {"type": "final", "text": "..."} for final transcripts
     - Receive binary audio for synthesized speech
     """
+    # Check if streaming is available
+    handler = _get_voice_websocket_handler()
+    if handler is None:
+        await websocket.close(code=4003, reason="Voice streaming not available (AWS dependencies not installed)")
+        return
+
     # Authenticate
     if not token:
         await websocket.close(code=4001, reason="Missing authentication token")
@@ -410,7 +428,7 @@ async def voice_websocket(websocket: WebSocket, token: str = None):
     await websocket.accept()
 
     try:
-        await handle_voice_websocket(websocket, user["user_id"])
+        await handler(websocket, user["user_id"])
     except WebSocketDisconnect:
         logger.info(f"Voice WebSocket disconnected for user {user['user_id']}")
     except Exception as e:

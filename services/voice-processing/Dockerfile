@@ -2,7 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install system dependencies for TTS (espeak) and audio processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    espeak-ng \
+    libespeak-ng1 \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/lib/*/libespeak-ng.so.1 /usr/lib/libespeak.so.1
+
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

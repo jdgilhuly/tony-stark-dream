@@ -4,6 +4,7 @@ import Spinner from 'ink-spinner';
 import type { AudioRecorderAdapter } from '@jarvis/core';
 import { NodeAudioRecorder } from '../audio/recorder.js';
 import { VoiceActivityDetector } from '../audio/vad.js';
+import { AudioPlayer } from '../audio/player.js';
 
 // Convert raw PCM to WAV format
 function pcmToWav(pcmData: ArrayBuffer, sampleRate: number = 16000, channels: number = 1, bitsPerSample: number = 16): ArrayBuffer {
@@ -67,6 +68,11 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse, recorder: 
   const [audioLevel, setAudioLevel] = useState(0);
   const [partialTranscript, setPartialTranscript] = useState('');
   const [vad] = useState(() => new VoiceActivityDetector());
+  const [audioPlayer] = useState(() => new AudioPlayer({
+    sampleRate: 22050,  // Match pyttsx3 output
+    channels: 1,
+    bitDepth: 16,
+  }));
 
   useEffect(() => {
     // Use injected recorder if provided, otherwise create a new one
@@ -80,8 +86,9 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse, recorder: 
 
     return () => {
       rec.stop();
+      audioPlayer.stop();
     };
-  }, [vad, injectedRecorder]);
+  }, [vad, injectedRecorder, audioPlayer]);
 
   const startListening = useCallback(async () => {
     if (!recorder) return;
@@ -183,8 +190,10 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse, recorder: 
       });
 
       if (ttsResponse.ok) {
-        // In a full implementation, this would play the audio
-        // For now, we just display the response
+        const audioBuffer = await ttsResponse.arrayBuffer();
+        // Skip WAV header (44 bytes) to get raw PCM data
+        const pcmData = Buffer.from(audioBuffer).slice(44);
+        await audioPlayer.playPcm(pcmData);
       }
 
       setState('idle');
@@ -202,6 +211,9 @@ export function VoiceChat({ serverUrl, tokens, onMessage, onResponse, recorder: 
         startListening();
       } else if (state === 'listening') {
         stopListening();
+      } else if (state === 'speaking') {
+        audioPlayer.stop();
+        setState('idle');
       }
     }
   });
