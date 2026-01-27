@@ -3,6 +3,8 @@ import logging
 from typing import AsyncGenerator
 from abc import ABC, abstractmethod
 
+import httpx
+
 from .config import get_settings
 from .models import Message, MessageRole
 
@@ -92,25 +94,13 @@ class OpenAIClient(LLMClient):
             raise
 
 
-class BedrockClient(LLMClient):
-    """Client for AWS Bedrock Claude API."""
+class OllamaClient(LLMClient):
+    """Client for local Ollama LLM."""
 
     def __init__(self):
-        import boto3
-        from botocore.config import Config
-
-        config = Config(
-            region_name=settings.aws_region,
-            retries={"max_attempts": 3, "mode": "adaptive"}
-        )
-
-        self.client = boto3.client(
-            "bedrock-runtime",
-            config=config,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-        )
-        self.model_id = settings.bedrock_model_id
+        self.base_url = settings.ollama_base_url
+        self.model = settings.ollama_model
+        self.client = httpx.AsyncClient(timeout=120.0)
 
     async def generate_response(
         self,
@@ -118,48 +108,48 @@ class BedrockClient(LLMClient):
         system_prompt: str,
         max_tokens: int = None
     ) -> tuple[str, dict]:
-        """Generate a response using Claude via Bedrock."""
-        max_tokens = max_tokens or settings.bedrock_max_tokens
+        """Generate a response using Ollama."""
+        max_tokens = max_tokens or settings.ollama_max_tokens
 
-        # Convert messages to Bedrock format
-        bedrock_messages = []
+        # Convert messages to Ollama format
+        ollama_messages = [{"role": "system", "content": system_prompt}]
         for msg in messages:
             if msg.role != MessageRole.SYSTEM:
-                bedrock_messages.append({
+                ollama_messages.append({
                     "role": msg.role.value,
                     "content": msg.content
                 })
 
         request_body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "system": system_prompt,
-            "messages": bedrock_messages
+            "model": self.model,
+            "messages": ollama_messages,
+            "stream": False,
+            "options": {
+                "num_predict": max_tokens
+            }
         }
 
         try:
-            response = self.client.invoke_model(
-                modelId=self.model_id,
-                body=json.dumps(request_body),
-                contentType="application/json",
-                accept="application/json"
+            response = await self.client.post(
+                f"{self.base_url}/api/chat",
+                json=request_body
             )
-
-            response_body = json.loads(response["body"].read())
+            response.raise_for_status()
+            response_data = response.json()
 
             # Extract text from response
-            content = response_body.get("content", [])
-            response_text = ""
-            for block in content:
-                if block.get("type") == "text":
-                    response_text += block.get("text", "")
+            response_text = response_data.get("message", {}).get("content", "")
 
-            usage = response_body.get("usage", {})
+            # Ollama provides token counts in eval_count and prompt_eval_count
+            usage = {
+                "input_tokens": response_data.get("prompt_eval_count", 0),
+                "output_tokens": response_data.get("eval_count", 0)
+            }
 
             logger.info(
-                f"Bedrock response generated",
+                f"Ollama response generated",
                 extra={
-                    "model": self.model_id,
+                    "model": self.model,
                     "input_tokens": usage.get("input_tokens"),
                     "output_tokens": usage.get("output_tokens")
                 }
@@ -167,8 +157,11 @@ class BedrockClient(LLMClient):
 
             return response_text, usage
 
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Ollama API HTTP error: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Bedrock API error: {e}")
+            logger.error(f"Ollama API error: {e}")
             raise
 
 
@@ -177,17 +170,14 @@ _llm_client: LLMClient | None = None
 
 
 def get_bedrock_client() -> LLMClient:
-    """Get the configured LLM client (OpenAI or Bedrock)."""
+    """Get the configured LLM client (Ollama or OpenAI)."""
     global _llm_client
     if _llm_client is None:
         if settings.llm_provider == "openai" and settings.openai_api_key:
             logger.info("Using OpenAI API for LLM")
             _llm_client = OpenAIClient()
-        elif settings.aws_access_key_id and settings.aws_secret_access_key:
-            logger.info("Using AWS Bedrock for LLM")
-            _llm_client = BedrockClient()
         else:
-            raise ValueError(
-                "No LLM provider configured. Set OPENAI_API_KEY or AWS credentials."
-            )
+            # Default to Ollama for local LLM
+            logger.info(f"Using Ollama for LLM (model: {settings.ollama_model})")
+            _llm_client = OllamaClient()
     return _llm_client

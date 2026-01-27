@@ -57,6 +57,13 @@ program
   .description('Login to JARVIS')
   .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
   .action(async (options) => {
+    // If auth is disabled, login is not needed
+    if (config.isAuthDisabled()) {
+      console.log('Auth is disabled. Login not required.');
+      console.log('All JARVIS commands are available without authentication.');
+      return;
+    }
+
     ensureInteractiveTerminal();
     render(
       <LoginScreen
@@ -72,6 +79,10 @@ program
   .command('logout')
   .description('Logout from JARVIS')
   .action(() => {
+    if (config.isAuthDisabled()) {
+      console.log('Auth is disabled. Logout not applicable.');
+      return;
+    }
     config.clearTokens();
     console.log('Logged out successfully.');
   });
@@ -414,6 +425,7 @@ program.action(async () => {
   const serverUrl = config.get('serverUrl') ?? 'http://localhost:3000';
 
   if (!tokens) {
+    // Auth is required but no tokens - show login
     render(<LoginScreen serverUrl={serverUrl} onSuccess={(t) => config.setTokens(t)} />);
   } else {
     render(<App serverUrl={serverUrl} tokens={tokens} />);

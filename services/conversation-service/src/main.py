@@ -1,10 +1,13 @@
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from jose import jwt, JWTError
 
@@ -18,9 +21,20 @@ from .models import (
     UserContext,
 )
 from .prompts import get_jarvis_prompt
-from .bedrock_client import get_bedrock_client, BedrockClient, QuotaExceededError
+from .bedrock_client import get_bedrock_client, LLMClient, QuotaExceededError
 from .memory import get_memory_manager, MemoryManager
 from .integrations import get_integration_manager, IntegrationManager
+from .agents import (
+    AgentRouter,
+    get_agent_router,
+    get_agent_registry,
+    get_session_cache,
+    AgentSummary,
+    CategoryInfo,
+    AgentDetailResponse,
+    AgentInfoResponse,
+    ReloadResult,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +45,16 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# Set agent definitions path
+if not settings.agent_definitions_path:
+    settings.agent_definitions_path = str(Path(__file__).parent.parent / "agents")
+    os.environ["AGENT_DEFINITIONS_PATH"] = settings.agent_definitions_path
+
+# Set agent configuration environment variables
+os.environ["AGENT_CONFIDENCE_THRESHOLD"] = str(settings.agent_confidence_threshold)
+os.environ["AGENT_SESSION_TTL_SECONDS"] = str(settings.agent_session_ttl_seconds)
+os.environ["AGENT_TOPIC_CHANGE_THRESHOLD"] = str(settings.agent_topic_change_threshold)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,6 +63,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.service_name}")
     memory = get_memory_manager()
     await memory.connect()
+
+    # Initialize agent registry
+    if settings.agent_routing_enabled:
+        registry = get_agent_registry()
+        agent_count = len(registry.get_all_agents())
+        category_count = len(registry.get_categories())
+        logger.info(f"Agent routing enabled: {agent_count} agents in {category_count} categories")
 
     yield
 
@@ -49,8 +80,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="JARVIS Conversation Service",
-    description="Core conversation orchestration with AWS Bedrock",
-    version="0.1.0",
+    description="Core conversation orchestration with local Ollama LLM and intelligent agent routing",
+    version="0.3.0",
     lifespan=lifespan
 )
 
@@ -73,47 +104,45 @@ async def get_current_user(request: Request) -> UserContext:
         timezone="UTC"
     )
 
-    # Original auth code (commented out):
-    # auth_header = request.headers.get("Authorization")
-    # if not auth_header or not auth_header.startswith("Bearer "):
-    #     raise HTTPException(status_code=401, detail="Missing authorization token")
-    # token = auth_header.split(" ")[1]
-    # try:
-    #     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-    #     return UserContext(
-    #         user_id=payload.get("userId"),
-    #         preferred_title=payload.get("preferredTitle", "sir"),
-    #         timezone=payload.get("timezone", "UTC")
-    #     )
-    # except JWTError as e:
-    #     logger.error(f"JWT decode error: {e}")
-    #     raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_agent_router_dep(
+    bedrock: LLMClient = Depends(get_bedrock_client),
+) -> AgentRouter:
+    """Get agent router with dependencies."""
+    if not settings.agent_routing_enabled:
+        return None
+    return get_agent_router(llm_client=bedrock, redis_client=None)
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    registry = get_agent_registry() if settings.agent_routing_enabled else None
     return {
         "status": "healthy",
         "service": settings.service_name,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "agent_routing_enabled": settings.agent_routing_enabled,
+        "agents_loaded": len(registry.get_all_agents()) if registry else 0,
     }
 
 
 @app.post("/conversation/message", response_model=ConversationResponse)
 async def send_message(
     request: ConversationRequest,
+    force_agent: Optional[str] = Query(None, description="Force specific agent by ID"),
+    include_agent_info: bool = Query(False, description="Include agent routing metadata"),
     user: UserContext = Depends(get_current_user),
     memory: MemoryManager = Depends(get_memory_manager),
-    bedrock: BedrockClient = Depends(get_bedrock_client),
-    integrations: IntegrationManager = Depends(get_integration_manager)
+    bedrock: LLMClient = Depends(get_bedrock_client),
+    integrations: IntegrationManager = Depends(get_integration_manager),
+    router: AgentRouter = Depends(get_agent_router_dep),
 ):
     """Process a conversation message and generate response."""
     start_time = time.time()
 
     # Get authorization token from the original request for service-to-service calls
     auth_token = None
-    # Note: In production, use a service token or pass through the user token
 
     # Get or create conversation
     conversation_id = request.conversation_id or str(uuid.uuid4())
@@ -171,11 +200,66 @@ async def send_message(
 
     context = "\n".join(context_parts) if context_parts else ""
 
-    # Generate system prompt
-    system_prompt = get_jarvis_prompt(
-        preferred_title=user.preferred_title,
-        context=context
-    )
+    # Prepare conversation history for routing
+    conversation_history = [
+        {"role": msg.role.value, "content": msg.content}
+        for msg in conversation.messages[-10:]  # Last 10 messages
+    ]
+
+    # Agent routing
+    agent_info = None
+    handoff_prefix = ""
+
+    if settings.agent_routing_enabled and router:
+        try:
+            routing_result = await router.route(
+                message=request.message,
+                session_id=conversation_id,
+                conversation_history=conversation_history,
+                preferred_title=user.preferred_title,
+                context=context,
+                force_agent=force_agent,
+            )
+
+            # Use composed prompt from router
+            system_prompt = routing_result.composed_prompt
+
+            # Prepare handoff text if present
+            if routing_result.handoff_text:
+                handoff_prefix = routing_result.handoff_text + "\n\n"
+
+            # Build agent info for response
+            if include_agent_info or routing_result.primary_agent:
+                agent_info = AgentInfoResponse(
+                    agent_id=routing_result.primary_agent.id if routing_result.primary_agent else None,
+                    agent_name=routing_result.primary_agent.name if routing_result.primary_agent else None,
+                    confidence=routing_result.classification.confidence if routing_result.classification else None,
+                    handoff_used=routing_result.handoff_text is not None,
+                    is_default=routing_result.is_default_jarvis,
+                )
+
+            logger.info(
+                f"Agent routing complete",
+                extra={
+                    "agent_id": routing_result.primary_agent.id if routing_result.primary_agent else "default",
+                    "confidence": routing_result.classification.confidence if routing_result.classification else 0,
+                    "cache_hit": routing_result.cache_hit,
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Agent routing failed, using default: {e}")
+            # Fall back to default JARVIS prompt
+            system_prompt = get_jarvis_prompt(
+                preferred_title=user.preferred_title,
+                context=context
+            )
+    else:
+        # Agent routing disabled - use original prompt
+        system_prompt = get_jarvis_prompt(
+            preferred_title=user.preferred_title,
+            context=context
+        )
 
     # Get context messages for LLM
     context_messages = await memory.get_context_messages(conversation_id)
@@ -192,6 +276,11 @@ async def send_message(
             messages=context_messages,
             system_prompt=system_prompt
         )
+
+        # Prepend handoff text if present
+        if handoff_prefix:
+            response_text = handoff_prefix + response_text
+
     except QuotaExceededError as e:
         logger.error(f"LLM quota exceeded: {e}")
         response_text = "I'm terribly sorry, sir, but my neural pathways require additional resources. The API quota has been exceeded. Please check your billing settings at platform.openai.com to restore my full capabilities."
@@ -203,12 +292,20 @@ async def send_message(
         usage = {}
 
     # Create assistant message
+    message_metadata = {"usage": usage}
+    if agent_info:
+        message_metadata["agent"] = {
+            "id": agent_info.agent_id,
+            "name": agent_info.agent_name,
+            "is_default": agent_info.is_default,
+        }
+
     assistant_message = Message(
         id=str(uuid.uuid4()),
         role=MessageRole.ASSISTANT,
         content=response_text,
         timestamp=datetime.utcnow(),
-        metadata={"usage": usage}
+        metadata=message_metadata
     )
     conversation.messages.append(assistant_message)
     conversation.last_message_at = datetime.utcnow()
@@ -223,7 +320,8 @@ async def send_message(
         extra={
             "conversation_id": conversation_id,
             "user_id": user.user_id,
-            "processing_time_ms": processing_time
+            "processing_time_ms": processing_time,
+            "agent_used": agent_info.agent_id if agent_info else "default",
         }
     )
 
@@ -235,6 +333,89 @@ async def send_message(
         processing_time_ms=processing_time
     )
 
+
+# Agent API endpoints
+
+@app.get("/agents", response_model=list[AgentSummary])
+async def list_agents(
+    category: Optional[str] = Query(None, description="Filter by category ID"),
+    router: AgentRouter = Depends(get_agent_router_dep),
+):
+    """List all available agents or filter by category."""
+    if not settings.agent_routing_enabled or not router:
+        raise HTTPException(status_code=503, detail="Agent routing is disabled")
+
+    return await router.list_agents(category)
+
+
+@app.get("/agents/search", response_model=list[AgentSummary])
+async def search_agents(
+    q: str = Query(..., description="Search query"),
+    router: AgentRouter = Depends(get_agent_router_dep),
+):
+    """Search agents by keyword."""
+    if not settings.agent_routing_enabled or not router:
+        raise HTTPException(status_code=503, detail="Agent routing is disabled")
+
+    return await router.search_agents(q)
+
+
+@app.get("/agents/categories", response_model=list[CategoryInfo])
+async def list_categories(
+    router: AgentRouter = Depends(get_agent_router_dep),
+):
+    """List all agent categories."""
+    if not settings.agent_routing_enabled or not router:
+        raise HTTPException(status_code=503, detail="Agent routing is disabled")
+
+    return await router.get_categories()
+
+
+@app.get("/agents/{agent_id}", response_model=AgentDetailResponse)
+async def get_agent(
+    agent_id: str,
+    router: AgentRouter = Depends(get_agent_router_dep),
+):
+    """Get detailed information about a specific agent."""
+    if not settings.agent_routing_enabled or not router:
+        raise HTTPException(status_code=503, detail="Agent routing is disabled")
+
+    agent = await router.get_agent_info(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    return AgentDetailResponse(
+        id=agent.id,
+        name=agent.name,
+        description=agent.description,
+        category=agent.category,
+        category_name=agent.category_name,
+        tools=agent.tools,
+        expertise_areas=agent.expertise_areas,
+        keywords=agent.keywords,
+    )
+
+
+@app.post("/agents/reload", response_model=ReloadResult)
+async def reload_agents(
+    router: AgentRouter = Depends(get_agent_router_dep),
+):
+    """Reload agent definitions from filesystem."""
+    if not settings.agent_routing_enabled or not router:
+        raise HTTPException(status_code=503, detail="Agent routing is disabled")
+
+    count, errors = await router.reload_agents()
+    categories = await router.get_categories()
+
+    return ReloadResult(
+        success=len(errors) == 0,
+        agents_loaded=count,
+        categories_loaded=len(categories),
+        errors=errors,
+    )
+
+
+# Existing conversation endpoints
 
 @app.get("/conversation/{conversation_id}")
 async def get_conversation(

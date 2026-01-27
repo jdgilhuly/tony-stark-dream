@@ -33,7 +33,22 @@ export class ConfigManager {
     });
   }
 
+  // Check if auth is disabled via environment variable
+  isAuthDisabled(): boolean {
+    return process.env.AUTH_DISABLED === 'true';
+  }
+
+  // Get tokens or return dummy tokens if auth is disabled
   getTokens(): AuthTokens | null {
+    // If auth is disabled, return dummy tokens
+    if (this.isAuthDisabled()) {
+      return {
+        accessToken: 'auth-disabled',
+        refreshToken: 'auth-disabled',
+        expiresAt: new Date(Date.now() + 86400000),
+      };
+    }
+
     const tokens = this.config.get('tokens');
     if (!tokens) return null;
 

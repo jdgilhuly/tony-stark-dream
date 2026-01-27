@@ -1,32 +1,32 @@
 /**
  * CLI Audio Recording Adapter
- * Uses node-record-lpcm16 for microphone input
+ * Uses ffmpeg on macOS (avfoundation) or node-record-lpcm16 on Linux
  */
 
 import type { AudioRecorderAdapter } from '@jarvis/core';
+import { spawn, ChildProcess } from 'child_process';
 
 interface RecordingOptions {
   sampleRate: number;
   channels: number;
-  threshold: number;
-  silence: string;
-  recorder: string;
 }
 
 export class NodeAudioRecorder implements AudioRecorderAdapter {
   private recording: boolean = false;
   private audioBuffer: Buffer[] = [];
+  private ffmpegProcess: ChildProcess | null = null;
   private recordInstance: any = null;
   private dataCallback?: (data: ArrayBuffer) => void;
   private options: RecordingOptions;
+  private useFfmpeg: boolean;
 
   constructor(options: Partial<RecordingOptions> = {}) {
+    // Use ffmpeg on macOS to avoid sox coreaudio buffer overrun issues
+    this.useFfmpeg = process.platform === 'darwin';
+
     this.options = {
-      sampleRate: options.sampleRate ?? 16000,
+      sampleRate: options.sampleRate ?? 48000,
       channels: options.channels ?? 1,
-      threshold: options.threshold ?? 0.5,
-      silence: options.silence ?? '1.0',
-      recorder: options.recorder ?? 'sox', // sox, rec, or arecord
     };
   }
 
@@ -35,20 +35,84 @@ export class NodeAudioRecorder implements AudioRecorderAdapter {
       throw new Error('Already recording');
     }
 
-    // Dynamic import to avoid issues in environments without the package
-    // Handle CommonJS default export pattern
-    const recordModule = await import('node-record-lpcm16');
-    const recordFn = (recordModule as any).default || (recordModule as any).record || recordModule;
-
     this.audioBuffer = [];
     this.recording = true;
+
+    if (this.useFfmpeg) {
+      await this.startFfmpeg();
+    } else {
+      await this.startNodeRecord();
+    }
+  }
+
+  private async startFfmpeg(): Promise<void> {
+    // Use ffmpeg with avfoundation on macOS
+    // -f avfoundation -i ":0" captures default audio input
+    // Output raw PCM s16le to stdout
+    this.ffmpegProcess = spawn('ffmpeg', [
+      '-f', 'avfoundation',
+      '-i', ':0',
+      '-ar', this.options.sampleRate.toString(),
+      '-ac', this.options.channels.toString(),
+      '-f', 's16le',
+      '-acodec', 'pcm_s16le',
+      'pipe:1'
+    ], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    this.ffmpegProcess.stdout?.on('data', (chunk: Buffer) => {
+      this.audioBuffer.push(chunk);
+
+      if (this.dataCallback) {
+        const arrayBuffer = new ArrayBuffer(chunk.byteLength);
+        new Uint8Array(arrayBuffer).set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+        this.dataCallback(arrayBuffer);
+      }
+    });
+
+    this.ffmpegProcess.stderr?.on('data', (data: Buffer) => {
+      // ffmpeg outputs progress to stderr - ignore unless it's an error
+      const msg = data.toString();
+      if (msg.includes('Error') || msg.includes('error')) {
+        console.error('ffmpeg error:', msg);
+      }
+    });
+
+    this.ffmpegProcess.on('error', (err: Error) => {
+      console.error('ffmpeg process error:', err);
+      this.recording = false;
+    });
+
+    this.ffmpegProcess.on('close', (code: number) => {
+      if (code !== 0 && code !== 255 && this.recording) {
+        console.error('ffmpeg exited with code:', code);
+      }
+      this.recording = false;
+    });
+  }
+
+  private async startNodeRecord(): Promise<void> {
+    // Fallback to node-record-lpcm16 on Linux
+    const recordModule = await import('node-record-lpcm16');
+
+    let recordFn: (opts: any) => any;
+    if (typeof recordModule.record === 'function') {
+      recordFn = recordModule.record;
+    } else if (recordModule.default && typeof recordModule.default.record === 'function') {
+      recordFn = recordModule.default.record;
+    } else if (typeof recordModule.default === 'function') {
+      recordFn = recordModule.default;
+    } else {
+      throw new Error('Could not find record function in node-record-lpcm16 module');
+    }
 
     this.recordInstance = recordFn({
       sampleRate: this.options.sampleRate,
       channels: this.options.channels,
-      threshold: this.options.threshold,
-      silence: this.options.silence,
-      recorder: this.options.recorder,
+      threshold: 0,
+      silence: '10.0',
+      recorder: 'arecord',
       audioType: 'raw',
     });
 
@@ -58,7 +122,6 @@ export class NodeAudioRecorder implements AudioRecorderAdapter {
       this.audioBuffer.push(chunk);
 
       if (this.dataCallback) {
-        // Copy to a new ArrayBuffer to ensure it's not SharedArrayBuffer
         const arrayBuffer = new ArrayBuffer(chunk.byteLength);
         new Uint8Array(arrayBuffer).set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
         this.dataCallback(arrayBuffer);
@@ -72,19 +135,30 @@ export class NodeAudioRecorder implements AudioRecorderAdapter {
   }
 
   async stop(): Promise<ArrayBuffer> {
-    if (!this.recording || !this.recordInstance) {
+    if (!this.recording) {
       return new ArrayBuffer(0);
     }
 
     this.recording = false;
-    this.recordInstance.stop();
+
+    if (this.useFfmpeg && this.ffmpegProcess) {
+      // Send SIGINT to ffmpeg to stop gracefully
+      this.ffmpegProcess.kill('SIGINT');
+
+      // Wait a bit for any remaining data
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      this.ffmpegProcess = null;
+    } else if (this.recordInstance) {
+      this.recordInstance.stop();
+      this.recordInstance = null;
+    }
 
     // Combine all chunks into a single buffer
     const totalLength = this.audioBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
     const combined = Buffer.concat(this.audioBuffer, totalLength);
 
     this.audioBuffer = [];
-    this.recordInstance = null;
 
     return combined.buffer.slice(combined.byteOffset, combined.byteOffset + combined.byteLength);
   }

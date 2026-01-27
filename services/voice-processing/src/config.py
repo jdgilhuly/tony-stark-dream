@@ -9,25 +9,18 @@ class Settings(BaseSettings):
     port: int = 8002
     debug: bool = False
 
-    # AWS
-    aws_region: str = "us-east-1"
-    aws_access_key_id: str | None = None
-    aws_secret_access_key: str | None = None
+    # Authentication
+    auth_disabled: bool = False  # Set AUTH_DISABLED=true to bypass auth
 
-    # AWS Transcribe
-    transcribe_language_code: str = "en-US"
-    transcribe_sample_rate: int = 16000
-    transcribe_media_encoding: str = "pcm"
+    # Whisper (local speech-to-text)
+    whisper_model: str = "base"
+    whisper_device: str = "cpu"
+    whisper_language: str = "en"
 
-    # AWS Polly
-    polly_voice_id: str = "Brian"
-    polly_engine: str = "neural"
-    polly_output_format: str = "mp3"
-    polly_sample_rate: str = "24000"
-
-    # S3
-    s3_audio_bucket: str = "jarvis-audio"
-    s3_audio_prefix: str = "voice/"
+    # pyttsx3 (local text-to-speech)
+    tts_engine: str = "pyttsx3"
+    tts_rate: int = 150
+    tts_voice_index: int = 0  # Index into system voices
 
     # JWT
     jwt_secret: str = "development-secret-change-in-production"

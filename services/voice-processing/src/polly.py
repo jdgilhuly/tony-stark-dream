@@ -1,9 +1,13 @@
-"""AWS Polly integration for text-to-speech."""
+"""Local text-to-speech using pyttsx3."""
 
+import asyncio
 import logging
+import tempfile
+import os
+import re
 from typing import Optional
-import boto3
-from botocore.config import Config
+
+import pyttsx3
 
 from .config import get_settings
 
@@ -12,20 +16,27 @@ settings = get_settings()
 
 
 class PollyClient:
-    """Client for AWS Polly text-to-speech synthesis."""
+    """Client for local text-to-speech synthesis using pyttsx3."""
 
     def __init__(self):
-        config = Config(
-            region_name=settings.aws_region,
-            retries={"max_attempts": 3, "mode": "adaptive"}
-        )
+        logger.info("Initializing pyttsx3 TTS engine")
+        self.engine = pyttsx3.init()
+        self.engine.setProperty('rate', settings.tts_rate)
 
-        self.client = boto3.client(
-            "polly",
-            config=config,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-        )
+        # Get available voices
+        self.voices = self.engine.getProperty('voices')
+        if self.voices and settings.tts_voice_index < len(self.voices):
+            self.engine.setProperty('voice', self.voices[settings.tts_voice_index].id)
+
+        logger.info(f"pyttsx3 initialized with {len(self.voices)} voices available")
+
+    def _strip_ssml(self, text: str) -> str:
+        """Remove SSML tags from text since pyttsx3 doesn't support SSML."""
+        # Remove SSML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        # Clean up extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
 
     async def synthesize_speech(
         self,
@@ -39,61 +50,77 @@ class PollyClient:
         Synthesize speech from text.
 
         Args:
-            text: Text to synthesize
-            voice_id: Polly voice ID (default: Brian)
-            output_format: Output format (mp3, ogg_vorbis, pcm)
-            engine: Engine type (standard, neural)
-            sample_rate: Sample rate for PCM output
+            text: Text to synthesize (SSML tags will be stripped)
+            voice_id: Voice index as string (optional)
+            output_format: Output format (only wav supported locally)
+            engine: Ignored (pyttsx3 uses system TTS)
+            sample_rate: Ignored
 
         Returns:
             Dict with audio_data, content_type, and metadata
         """
-        voice_id = voice_id or settings.polly_voice_id
-        output_format = output_format or settings.polly_output_format
-        engine = engine or settings.polly_engine
-        sample_rate = sample_rate or settings.polly_sample_rate
+        # Strip SSML if present
+        clean_text = self._strip_ssml(text)
+
+        if not clean_text:
+            raise ValueError("Text is empty after processing")
+
+        # Set voice if specified
+        if voice_id:
+            try:
+                voice_idx = int(voice_id)
+                if 0 <= voice_idx < len(self.voices):
+                    self.engine.setProperty('voice', self.voices[voice_idx].id)
+            except (ValueError, IndexError):
+                pass  # Keep current voice
+
+        # Create temp file for audio output
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            temp_path = f.name
 
         try:
-            # Check if text contains SSML
-            text_type = "ssml" if text.strip().startswith("<speak>") else "text"
+            # Run TTS in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: self._synthesize_to_file(clean_text, temp_path)
+            )
 
-            params = {
-                "Text": text,
-                "TextType": text_type,
-                "VoiceId": voice_id,
-                "OutputFormat": output_format,
-                "Engine": engine,
-            }
-
-            # Add sample rate for PCM output
-            if output_format == "pcm":
-                params["SampleRate"] = sample_rate
-
-            response = self.client.synthesize_speech(**params)
-
-            audio_data = response["AudioStream"].read()
+            # Read the audio file
+            with open(temp_path, 'rb') as f:
+                audio_data = f.read()
 
             logger.info(
                 f"Synthesized speech",
                 extra={
-                    "voice_id": voice_id,
-                    "text_length": len(text),
-                    "audio_size": len(audio_data),
-                    "content_type": response["ContentType"]
+                    "text_length": len(clean_text),
+                    "audio_size": len(audio_data)
                 }
             )
 
             return {
                 "audio_data": audio_data,
-                "content_type": response["ContentType"],
-                "request_characters": response.get("RequestCharacters", len(text)),
-                "voice_id": voice_id,
-                "format": output_format
+                "content_type": "audio/wav",
+                "request_characters": len(clean_text),
+                "voice_id": str(settings.tts_voice_index),
+                "format": "wav"
             }
 
         except Exception as e:
-            logger.error(f"Polly synthesis error: {e}")
+            logger.error(f"TTS synthesis error: {e}")
             raise
+
+        finally:
+            # Cleanup temp file
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+
+    def _synthesize_to_file(self, text: str, filepath: str):
+        """Synchronous helper to synthesize text to file."""
+        self.engine.save_to_file(text, filepath)
+        self.engine.runAndWait()
 
     async def synthesize_speech_ssml(
         self,
@@ -105,18 +132,17 @@ class PollyClient:
         """
         Synthesize speech from SSML.
 
+        Note: SSML tags are stripped since pyttsx3 doesn't support SSML.
+
         Args:
-            ssml: SSML markup (must start with <speak>)
-            voice_id: Polly voice ID
+            ssml: SSML markup (tags will be removed)
+            voice_id: Voice index as string
             output_format: Output format
-            engine: Engine type
+            engine: Ignored
 
         Returns:
             Dict with audio_data and metadata
         """
-        if not ssml.strip().startswith("<speak>"):
-            ssml = f"<speak>{ssml}</speak>"
-
         return await self.synthesize_speech(
             text=ssml,
             voice_id=voice_id,
@@ -130,34 +156,34 @@ class PollyClient:
         engine: str = None
     ) -> list[dict]:
         """
-        List available Polly voices.
+        List available system voices.
 
         Args:
-            language_code: Filter by language (e.g., 'en-US')
-            engine: Filter by engine type
+            language_code: Filter by language (optional, partial match)
+            engine: Ignored
 
         Returns:
             List of voice info dicts
         """
-        params = {}
-        if language_code:
-            params["LanguageCode"] = language_code
-        if engine:
-            params["Engine"] = engine
+        result = []
+        for i, voice in enumerate(self.voices):
+            # Extract language from voice properties
+            voice_lang = getattr(voice, 'languages', ['en'])[0] if hasattr(voice, 'languages') else 'en'
 
-        response = self.client.describe_voices(**params)
+            # Filter by language if specified
+            if language_code and language_code.lower() not in voice_lang.lower():
+                continue
 
-        return [
-            {
-                "id": voice["Id"],
-                "name": voice["Name"],
-                "gender": voice["Gender"],
-                "language_code": voice["LanguageCode"],
-                "language_name": voice["LanguageName"],
-                "supported_engines": voice.get("SupportedEngines", [])
-            }
-            for voice in response.get("Voices", [])
-        ]
+            result.append({
+                "id": str(i),
+                "name": voice.name,
+                "gender": getattr(voice, 'gender', 'unknown'),
+                "language_code": voice_lang,
+                "language_name": voice_lang,
+                "supported_engines": ["local"]
+            })
+
+        return result
 
     def create_jarvis_ssml(
         self,
@@ -166,57 +192,54 @@ class PollyClient:
         rate: str = "medium"
     ) -> str:
         """
-        Create SSML with JARVIS-appropriate speech characteristics.
+        Create SSML-like markup (will be stripped before synthesis).
+
+        Note: This is kept for API compatibility but pyttsx3 doesn't use SSML.
+        The rate adjustment is applied via engine settings instead.
 
         Args:
-            text: Plain text to wrap in SSML
-            emphasis: Speech emphasis level
-            rate: Speaking rate
+            text: Plain text
+            emphasis: Ignored
+            rate: Speaking rate (adjusts engine rate)
 
         Returns:
-            SSML markup string
+            Original text (SSML wrapper is ignored)
         """
-        # Clean text for SSML
-        text = text.replace("&", "&amp;")
-        text = text.replace("<", "&lt;")
-        text = text.replace(">", "&gt;")
-        text = text.replace('"', "&quot;")
-        text = text.replace("'", "&apos;")
+        # Adjust rate based on parameter
+        rate_map = {
+            "slow": 100,
+            "medium": 150,
+            "fast": 200
+        }
+        if rate in rate_map:
+            self.engine.setProperty('rate', rate_map[rate])
 
-        ssml = f"""<speak>
-    <prosody rate="{rate}">
-        <emphasis level="{emphasis}">
-            {text}
-        </emphasis>
-    </prosody>
-</speak>"""
-
-        return ssml
+        return text
 
 
-# JARVIS voice presets
+# JARVIS voice presets (adapted for local TTS)
 JARVIS_VOICE_PRESETS = {
     "default": {
-        "voice_id": "Brian",
-        "engine": "neural",
+        "voice_id": "0",
+        "engine": "local",
         "rate": "medium",
         "emphasis": "moderate"
     },
     "urgent": {
-        "voice_id": "Brian",
-        "engine": "neural",
+        "voice_id": "0",
+        "engine": "local",
         "rate": "fast",
         "emphasis": "strong"
     },
     "calm": {
-        "voice_id": "Brian",
-        "engine": "neural",
+        "voice_id": "0",
+        "engine": "local",
         "rate": "slow",
         "emphasis": "reduced"
     },
     "formal": {
-        "voice_id": "Brian",
-        "engine": "neural",
+        "voice_id": "0",
+        "engine": "local",
         "rate": "medium",
         "emphasis": "moderate"
     }

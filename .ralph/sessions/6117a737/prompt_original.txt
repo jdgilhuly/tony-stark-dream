@@ -1,0 +1,1 @@
+update this to be abel to use local model, go research nviidia local model or something, make this able to trigger my ralph workflow or invoke any of my claude_agents in parent directory plz

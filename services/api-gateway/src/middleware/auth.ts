@@ -16,11 +16,29 @@ export interface AuthenticatedRequest extends Request {
 // Read at runtime to ensure dotenv has loaded
 const getJwtSecret = () => process.env.JWT_SECRET ?? 'development-secret-change-in-production';
 
+// Check if auth is disabled
+const isAuthDisabled = () => process.env.AUTH_DISABLED === 'true';
+
+// Default user when auth is disabled
+const DEFAULT_USER: JwtPayload = {
+  userId: 'default-user',
+  email: 'jarvis@local',
+  iat: Date.now(),
+  exp: Date.now() + 86400000,
+};
+
 export const authenticate = (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): void => {
+  // If auth is disabled, allow all requests with a default user
+  if (isAuthDisabled()) {
+    req.user = DEFAULT_USER;
+    next();
+    return;
+  }
+
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

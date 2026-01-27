@@ -1,11 +1,13 @@
-"""AWS Transcribe integration for speech-to-text."""
+"""Local Whisper integration for speech-to-text."""
 
 import asyncio
 import logging
-import uuid
+import tempfile
+import os
 from typing import AsyncGenerator
-import boto3
-from botocore.config import Config
+
+import whisper
+import numpy as np
 
 from .config import get_settings
 
@@ -14,27 +16,16 @@ settings = get_settings()
 
 
 class TranscribeClient:
-    """Client for AWS Transcribe streaming and batch transcription."""
+    """Client for local Whisper speech-to-text transcription."""
 
     def __init__(self):
-        config = Config(
-            region_name=settings.aws_region,
-            retries={"max_attempts": 3, "mode": "adaptive"}
+        logger.info(f"Loading Whisper model: {settings.whisper_model}")
+        self.model = whisper.load_model(
+            settings.whisper_model,
+            device=settings.whisper_device
         )
-
-        self.client = boto3.client(
-            "transcribe",
-            config=config,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-        )
-
-        self.streaming_client = boto3.client(
-            "transcribe-streaming",
-            config=config,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-        )
+        self.language = settings.whisper_language
+        logger.info("Whisper model loaded successfully")
 
     async def transcribe_audio(
         self,
@@ -42,109 +33,77 @@ class TranscribeClient:
         language_code: str = None
     ) -> dict:
         """
-        Transcribe audio data using batch transcription.
+        Transcribe audio data using Whisper.
 
         Args:
-            audio_data: Raw audio bytes (PCM or other supported format)
-            language_code: Language code (default: en-US)
+            audio_data: Raw audio bytes (WAV, MP3, PCM, or other supported format)
+            language_code: Language code (default from settings)
 
         Returns:
             Transcription result with text and confidence
         """
-        language_code = language_code or settings.transcribe_language_code
-        job_name = f"jarvis-transcribe-{uuid.uuid4().hex[:8]}"
+        language = language_code.split("-")[0] if language_code else self.language
 
-        # Upload audio to S3 first
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-        )
-
-        audio_key = f"{settings.s3_audio_prefix}input/{job_name}.pcm"
-        s3.put_object(
-            Bucket=settings.s3_audio_bucket,
-            Key=audio_key,
-            Body=audio_data
-        )
-
-        audio_uri = f"s3://{settings.s3_audio_bucket}/{audio_key}"
+        # Write audio to temp file for Whisper
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(audio_data)
+            temp_path = f.name
 
         try:
-            # Start transcription job
-            self.client.start_transcription_job(
-                TranscriptionJobName=job_name,
-                Media={"MediaFileUri": audio_uri},
-                MediaFormat="pcm",
-                MediaSampleRateHertz=settings.transcribe_sample_rate,
-                LanguageCode=language_code,
-                OutputBucketName=settings.s3_audio_bucket,
-                OutputKey=f"{settings.s3_audio_prefix}output/{job_name}.json"
+            # Run transcription in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.model.transcribe(
+                    temp_path,
+                    language=language,
+                    fp16=False  # Use fp32 for CPU
+                )
             )
 
-            # Poll for completion
-            while True:
-                response = self.client.get_transcription_job(
-                    TranscriptionJobName=job_name
-                )
-                status = response["TranscriptionJob"]["TranscriptionJobStatus"]
+            text = result.get("text", "").strip()
 
-                if status == "COMPLETED":
-                    # Get transcript from S3
-                    transcript_obj = s3.get_object(
-                        Bucket=settings.s3_audio_bucket,
-                        Key=f"{settings.s3_audio_prefix}output/{job_name}.json"
-                    )
-                    import json
-                    transcript_data = json.loads(transcript_obj["Body"].read())
+            # Whisper doesn't provide per-word confidence, estimate from segments
+            segments = result.get("segments", [])
+            if segments:
+                avg_no_speech_prob = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
+                confidence = 1.0 - avg_no_speech_prob
+            else:
+                confidence = 0.9 if text else 0.0
 
-                    results = transcript_data.get("results", {})
-                    transcripts = results.get("transcripts", [])
+            logger.info(
+                f"Transcription completed",
+                extra={
+                    "text_length": len(text),
+                    "confidence": confidence,
+                    "language": language
+                }
+            )
 
-                    if transcripts:
-                        return {
-                            "text": transcripts[0].get("transcript", ""),
-                            "confidence": self._extract_confidence(results),
-                            "is_final": True
-                        }
-                    return {"text": "", "confidence": 0.0, "is_final": True}
+            return {
+                "text": text,
+                "confidence": confidence,
+                "is_final": True
+            }
 
-                elif status == "FAILED":
-                    logger.error(f"Transcription failed: {response}")
-                    raise Exception("Transcription job failed")
-
-                await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Whisper transcription error: {e}")
+            raise
 
         finally:
-            # Cleanup
+            # Cleanup temp file
             try:
-                self.client.delete_transcription_job(TranscriptionJobName=job_name)
+                os.unlink(temp_path)
             except Exception:
                 pass
 
-    def _extract_confidence(self, results: dict) -> float:
-        """Extract average confidence from transcription results."""
-        items = results.get("items", [])
-        if not items:
-            return 0.0
-
-        confidences = [
-            float(item.get("alternatives", [{}])[0].get("confidence", 0))
-            for item in items
-            if item.get("alternatives")
-        ]
-
-        return sum(confidences) / len(confidences) if confidences else 0.0
-
 
 class StreamingTranscriber:
-    """WebSocket-based streaming transcription."""
+    """Buffered streaming transcription using Whisper."""
 
     def __init__(self):
-        self.config = Config(
-            region_name=settings.aws_region,
-            retries={"max_attempts": 3, "mode": "adaptive"}
-        )
+        self.transcriber = TranscribeClient()
+        self.sample_rate = 16000  # Whisper expects 16kHz
 
     async def transcribe_stream(
         self,
@@ -152,30 +111,31 @@ class StreamingTranscriber:
         language_code: str = None
     ) -> AsyncGenerator[dict, None]:
         """
-        Stream audio for real-time transcription.
+        Stream audio for transcription.
+
+        Note: Whisper doesn't support true streaming, so we buffer chunks
+        and transcribe periodically.
 
         Args:
             audio_stream: Async generator yielding audio chunks
-            language_code: Language code (default: en-US)
+            language_code: Language code (default from settings)
 
         Yields:
             Partial and final transcription results
         """
-        language_code = language_code or settings.transcribe_language_code
-
-        # Note: Full streaming implementation requires amazon-transcribe-streaming-sdk
-        # This is a simplified version that buffers and transcribes
-
         buffer = bytearray()
-        transcriber = TranscribeClient()
+        chunk_size = self.sample_rate * 2 * 2  # 2 seconds of 16-bit audio
 
         async for chunk in audio_stream:
             buffer.extend(chunk)
 
-            # Transcribe when we have enough audio (approx 1 second at 16kHz)
-            if len(buffer) >= settings.transcribe_sample_rate * 2:
+            # Transcribe when we have enough audio
+            if len(buffer) >= chunk_size:
                 try:
-                    result = await transcriber.transcribe_audio(bytes(buffer))
+                    result = await self.transcriber.transcribe_audio(
+                        bytes(buffer),
+                        language_code
+                    )
                     yield {
                         "text": result["text"],
                         "confidence": result["confidence"],
@@ -184,10 +144,13 @@ class StreamingTranscriber:
                 except Exception as e:
                     logger.error(f"Streaming transcription error: {e}")
 
-        # Final transcription
+        # Final transcription of remaining buffer
         if buffer:
             try:
-                result = await transcriber.transcribe_audio(bytes(buffer))
+                result = await self.transcriber.transcribe_audio(
+                    bytes(buffer),
+                    language_code
+                )
                 yield {
                     "text": result["text"],
                     "confidence": result["confidence"],
@@ -198,7 +161,7 @@ class StreamingTranscriber:
                 yield {"text": "", "confidence": 0.0, "is_final": True}
 
 
-# Singleton instances
+# Singleton instance
 _transcribe_client: TranscribeClient | None = None
 
 

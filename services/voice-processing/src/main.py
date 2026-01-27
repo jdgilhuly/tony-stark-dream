@@ -91,7 +91,11 @@ class VoiceInfo(BaseModel):
 
 # Auth dependency
 async def get_current_user(request: Request) -> dict:
-    """Extract user from JWT token."""
+    """Extract user from JWT token, or return default user if auth is disabled."""
+    # If auth is disabled, return a default user
+    if settings.auth_disabled:
+        return {"user_id": "default-user"}
+
     auth_header = request.headers.get("Authorization")
 
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -327,6 +331,10 @@ async def update_wake_word_config(
 
 def get_user_from_token(token: str) -> Optional[dict]:
     """Extract user from JWT token without raising exceptions."""
+    # If auth is disabled, return default user
+    if settings.auth_disabled:
+        return {"user_id": "default-user"}
+
     try:
         payload = jwt.decode(
             token,

@@ -31,8 +31,8 @@ export class JarvisApiClient {
   }
 
   // Authentication
-  async login(email: string, password: string): Promise<ApiResponse<{ user: User; tokens: AuthTokens }>> {
-    const response = await this.post<{ user: User; tokens: AuthTokens }>('/auth/login', { email, password });
+  async login(password: string): Promise<ApiResponse<{ user: User; tokens: AuthTokens }>> {
+    const response = await this.post<{ user: User; tokens: AuthTokens }>('/auth/login', { password });
     if (response.success && response.data) {
       this.tokens = response.data.tokens;
     }

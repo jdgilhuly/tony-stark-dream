@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Text, Spinner, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
+import Spinner from 'ink-spinner';
 import axios from 'axios';
 
 interface MemoryManagerProps {

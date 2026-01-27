@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
-import { v4 as uuidv4 } from 'uuid';
 import {
   generateToken,
   generateRefreshToken,
@@ -10,45 +9,28 @@ import { logger } from '../utils/logger.js';
 
 export const authRouter: RouterType = Router();
 
-// In-memory user store for development (replace with database)
-const users = new Map<string, { id: string; email: string; password: string; name: string }>();
+// Check if auth is disabled
+const isAuthDisabled = () => process.env.AUTH_DISABLED === 'true';
 
+// Get master password from env
+const getMasterPassword = () => process.env.JARVIS_PASSWORD;
+
+// Default user for simplified auth
+const DEFAULT_USER_ID = 'jarvis-user';
+const DEFAULT_EMAIL = 'jarvis@local';
+const DEFAULT_NAME = 'JARVIS User';
+
+// Registration is a no-op in simplified auth - kept for API compatibility
 authRouter.post('/register', async (req: Request, res: Response) => {
-  try {
-    const { email, password, name } = req.body;
-
-    if (!email || !password || !name) {
-      res.status(400).json({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Email, password, and name are required' },
-      });
-      return;
-    }
-
-    // Check if user exists
-    const existingUser = Array.from(users.values()).find((u) => u.email === email);
-    if (existingUser) {
-      res.status(409).json({
-        success: false,
-        error: { code: 'USER_EXISTS', message: 'User already exists' },
-      });
-      return;
-    }
-
-    // Create user (in production, hash the password)
-    const userId = uuidv4();
-    const user = { id: userId, email, password, name };
-    users.set(userId, user);
-
-    const accessToken = generateToken(userId, email);
-    const refreshToken = generateRefreshToken(userId);
-
-    logger.info(`User registered: ${email}`);
+  // If auth is disabled, just return success
+  if (isAuthDisabled()) {
+    const accessToken = generateToken(DEFAULT_USER_ID, DEFAULT_EMAIL);
+    const refreshToken = generateRefreshToken(DEFAULT_USER_ID);
 
     res.status(201).json({
       success: true,
       data: {
-        user: { id: userId, email, name },
+        user: { id: DEFAULT_USER_ID, email: DEFAULT_EMAIL, name: DEFAULT_NAME },
         tokens: {
           accessToken,
           refreshToken,
@@ -56,46 +38,78 @@ authRouter.post('/register', async (req: Request, res: Response) => {
         },
       },
     });
-  } catch (error) {
-    logger.error('Registration error:', error);
-    res.status(500).json({
-      success: false,
-      error: { code: 'REGISTRATION_ERROR', message: 'Registration failed' },
-    });
+    return;
   }
+
+  // Registration not supported in simplified auth mode - direct to login
+  res.status(400).json({
+    success: false,
+    error: { code: 'NOT_SUPPORTED', message: 'Registration not supported. Use login with JARVIS_PASSWORD.' },
+  });
 });
 
 authRouter.post('/login', async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    // If auth is disabled, return tokens without checking password
+    if (isAuthDisabled()) {
+      const accessToken = generateToken(DEFAULT_USER_ID, DEFAULT_EMAIL);
+      const refreshToken = generateRefreshToken(DEFAULT_USER_ID);
 
-    if (!email || !password) {
+      logger.info('Auth disabled - auto-login');
+
+      res.json({
+        success: true,
+        data: {
+          user: { id: DEFAULT_USER_ID, email: DEFAULT_EMAIL, name: DEFAULT_NAME },
+          tokens: {
+            accessToken,
+            refreshToken,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        },
+      });
+      return;
+    }
+
+    const { password } = req.body;
+
+    if (!password) {
       res.status(400).json({
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Email and password are required' },
+        error: { code: 'VALIDATION_ERROR', message: 'Password is required' },
       });
       return;
     }
 
-    // Find user
-    const user = Array.from(users.values()).find((u) => u.email === email);
-    if (!user || user.password !== password) {
+    const masterPassword = getMasterPassword();
+
+    if (!masterPassword) {
+      logger.error('JARVIS_PASSWORD not set');
+      res.status(500).json({
+        success: false,
+        error: { code: 'CONFIG_ERROR', message: 'Server not configured. Set JARVIS_PASSWORD environment variable.' },
+      });
+      return;
+    }
+
+    // Check password against master password
+    if (password !== masterPassword) {
       res.status(401).json({
         success: false,
-        error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' },
+        error: { code: 'INVALID_CREDENTIALS', message: 'Invalid password' },
       });
       return;
     }
 
-    const accessToken = generateToken(user.id, email);
-    const refreshToken = generateRefreshToken(user.id);
+    const accessToken = generateToken(DEFAULT_USER_ID, DEFAULT_EMAIL);
+    const refreshToken = generateRefreshToken(DEFAULT_USER_ID);
 
-    logger.info(`User logged in: ${email}`);
+    logger.info('User logged in with master password');
 
     res.json({
       success: true,
       data: {
-        user: { id: user.id, email: user.email, name: user.name },
+        user: { id: DEFAULT_USER_ID, email: DEFAULT_EMAIL, name: DEFAULT_NAME },
         tokens: {
           accessToken,
           refreshToken,
@@ -114,6 +128,22 @@ authRouter.post('/login', async (req: Request, res: Response) => {
 
 authRouter.post('/refresh', async (req: Request, res: Response) => {
   try {
+    // If auth is disabled, just return new tokens
+    if (isAuthDisabled()) {
+      const newAccessToken = generateToken(DEFAULT_USER_ID, DEFAULT_EMAIL);
+      const newRefreshToken = generateRefreshToken(DEFAULT_USER_ID);
+
+      res.json({
+        success: true,
+        data: {
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+      });
+      return;
+    }
+
     const { refreshToken } = req.body;
 
     if (!refreshToken) {
@@ -133,17 +163,9 @@ authRouter.post('/refresh', async (req: Request, res: Response) => {
       return;
     }
 
-    const user = users.get(payload.userId);
-    if (!user) {
-      res.status(401).json({
-        success: false,
-        error: { code: 'USER_NOT_FOUND', message: 'User not found' },
-      });
-      return;
-    }
-
-    const newAccessToken = generateToken(user.id, user.email);
-    const newRefreshToken = generateRefreshToken(user.id);
+    // In simplified auth, we just issue new tokens for the default user
+    const newAccessToken = generateToken(DEFAULT_USER_ID, DEFAULT_EMAIL);
+    const newRefreshToken = generateRefreshToken(DEFAULT_USER_ID);
 
     res.json({
       success: true,

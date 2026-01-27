@@ -9,22 +9,26 @@ class Settings(BaseSettings):
     port: int = 8001
     debug: bool = False
 
-    # AWS (for Bedrock fallback)
-    aws_region: str = "us-east-1"
-    aws_access_key_id: str | None = None
-    aws_secret_access_key: str | None = None
-
-    # OpenAI API (preferred)
+    # OpenAI API (optional)
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o"
     openai_max_tokens: int = 4096
 
-    # AWS Bedrock (fallback)
-    bedrock_model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
-    bedrock_max_tokens: int = 4096
+    # Ollama (local LLM - default)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2"
+    ollama_max_tokens: int = 4096
 
-    # LLM Provider: "openai" or "bedrock"
-    llm_provider: str = "openai"
+    # LLM Provider: "ollama" or "openai"
+    llm_provider: str = "ollama"
+
+    # Agent Routing
+    agent_routing_enabled: bool = True
+    agent_definitions_path: str = ""  # Set at runtime
+    agent_confidence_threshold: float = 0.6
+    agent_session_ttl_seconds: int = 3600
+    agent_topic_change_threshold: float = 0.7
+    agent_max_secondary_agents: int = 3
 
     # Database
     database_url: str = "postgresql://jarvis:jarvis@localhost:5432/jarvis"

@@ -9,33 +9,32 @@ interface LoginScreenProps {
   onSuccess: (tokens: AuthTokens) => void;
 }
 
-type LoginStep = 'email' | 'password' | 'loading' | 'success' | 'error' | 'register_name';
+type LoginStep = 'password' | 'loading' | 'success' | 'error';
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }) => {
   const { exit } = useApp();
-  const [step, setStep] = useState<LoginStep>('email');
-  const [email, setEmail] = useState('');
+  const [step, setStep] = useState<LoginStep>('password');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [isNewUser, setIsNewUser] = useState(false);
-  const [errorInput, setErrorInput] = useState('');
 
   const client = React.useMemo(() => createApiClient({ baseUrl: serverUrl }), [serverUrl]);
 
-  const handleLogin = useCallback(async (loginEmail: string, loginPassword: string) => {
+  const handleLogin = useCallback(async (loginPassword: string) => {
     setStep('loading');
     setError(null);
 
     try {
-      const response = await client.login(loginEmail, loginPassword);
+      const response = await client.login(loginPassword);
 
       if (response.success && response.data) {
         onSuccess(response.data.tokens);
         setStep('success');
         setTimeout(() => exit(), 1500);
       } else if (response.error?.code === 'INVALID_CREDENTIALS') {
-        setError('Invalid email or password. Press Enter to try again or type "register" to create an account.');
+        setError('Invalid password. Press Enter to try again.');
+        setStep('error');
+      } else if (response.error?.code === 'CONFIG_ERROR') {
+        setError('Server not configured. Ensure JARVIS_PASSWORD is set on the server.');
         setStep('error');
       } else {
         setError(response.error?.message ?? 'Login failed');
@@ -47,75 +46,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
     }
   }, [client, onSuccess, exit]);
 
-  const handleRegister = useCallback(async (regEmail: string, regPassword: string, regName: string) => {
-    setStep('loading');
-    setError(null);
-
-    try {
-      // Use fetch directly for registration since client doesn't have register method
-      const response = await fetch(`${serverUrl}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: regEmail, password: regPassword, name: regName }),
-      });
-
-      const data = await response.json() as {
-        success: boolean;
-        data?: { tokens: { accessToken: string; refreshToken: string; expiresAt: string } };
-        error?: { message: string }
-      };
-
-      if (data.success && data.data) {
-        const tokens: AuthTokens = {
-          ...data.data.tokens,
-          expiresAt: new Date(data.data.tokens.expiresAt),
-        };
-        onSuccess(tokens);
-        setStep('success');
-        setTimeout(() => exit(), 1500);
-      } else {
-        setError(data.error?.message ?? 'Registration failed');
-        setStep('error');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Connection failed');
-      setStep('error');
-    }
-  }, [serverUrl, onSuccess, exit]);
-
-  const handleEmailSubmit = useCallback((value: string) => {
-    setEmail(value);
-    setStep('password');
-  }, []);
-
   const handlePasswordSubmit = useCallback((value: string) => {
     setPassword(value);
-    if (isNewUser) {
-      setStep('register_name');
-    } else {
-      handleLogin(email, value);
-    }
-  }, [isNewUser, handleLogin, email]);
+    handleLogin(value);
+  }, [handleLogin]);
 
-  const handleNameSubmit = useCallback((value: string) => {
-    setName(value);
-    handleRegister(email, password, value);
-  }, [handleRegister, email, password]);
-
-  const handleErrorInput = useCallback(() => {
-    if (errorInput.toLowerCase() === 'register') {
-      setIsNewUser(true);
-      setStep('email');
-      setEmail('');
-      setPassword('');
-      setErrorInput('');
-    } else {
-      setStep('email');
-      setEmail('');
-      setPassword('');
-      setErrorInput('');
-    }
-  }, [errorInput]);
+  const handleRetry = useCallback(() => {
+    setPassword('');
+    setStep('password');
+  }, []);
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -125,24 +64,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
         </Text>
       </Box>
 
-      {step === 'email' && (
-        <Box flexDirection="column">
-          <Text>{isNewUser ? 'Create your account' : 'Please login to continue'}</Text>
-          <Box marginTop={1}>
-            <Text>Email: </Text>
-            <TextInput
-              value={email}
-              onChange={setEmail}
-              onSubmit={handleEmailSubmit}
-              placeholder="your@email.com"
-            />
-          </Box>
-        </Box>
-      )}
-
       {step === 'password' && (
         <Box flexDirection="column">
-          <Text>Email: {email}</Text>
+          <Text>Enter your JARVIS password to continue</Text>
           <Box marginTop={1}>
             <Text>Password: </Text>
             <TextInput
@@ -151,21 +75,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
               onSubmit={handlePasswordSubmit}
               mask="*"
               placeholder="Enter password"
-            />
-          </Box>
-        </Box>
-      )}
-
-      {step === 'register_name' && (
-        <Box flexDirection="column">
-          <Text>Email: {email}</Text>
-          <Box marginTop={1}>
-            <Text>Name: </Text>
-            <TextInput
-              value={name}
-              onChange={setName}
-              onSubmit={handleNameSubmit}
-              placeholder="Your name"
             />
           </Box>
         </Box>
@@ -191,11 +100,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ serverUrl, onSuccess }
         <Box flexDirection="column">
           <Text color="red">Error: {error}</Text>
           <Box marginTop={1}>
-            <Text>Type "register" to create account, or press Enter to retry: </Text>
+            <Text>Press Enter to retry: </Text>
             <TextInput
-              value={errorInput}
-              onChange={setErrorInput}
-              onSubmit={handleErrorInput}
+              value=""
+              onChange={() => {}}
+              onSubmit={handleRetry}
               placeholder=""
             />
           </Box>
