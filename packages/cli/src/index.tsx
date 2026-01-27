@@ -6,6 +6,9 @@ import { LoginScreen } from './components/LoginScreen.js';
 import { BriefingScreen } from './components/BriefingScreen.js';
 import { Dashboard } from './components/Dashboard.js';
 import { VoiceChat } from './components/VoiceChat.js';
+import { TaskRunner } from './components/TaskRunner.js';
+import { MemoryManager } from './components/MemoryManager.js';
+import { ResearchViewer } from './components/ResearchViewer.js';
 import { ConfigManager } from './config.js';
 import { MockAudioRecorder } from './audio/mock-recorder.js';
 
@@ -201,6 +204,205 @@ program
         recorder={mockRecorder}
         onMessage={(msg) => console.log(`[Test] Transcribed: ${msg}`)}
         onResponse={(res) => console.log(`[Test] JARVIS: ${res}`)}
+      />
+    );
+  });
+
+// Natural language task execution
+program
+  .command('do <task>')
+  .description('Execute any task using natural language')
+  .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
+  .action(async (task: string, options) => {
+    const tokens = config.getTokens();
+
+    if (!tokens) {
+      console.log('Please login first: jarvis login');
+      process.exit(1);
+    }
+
+    render(
+      <TaskRunner
+        serverUrl={options.server}
+        tokens={tokens}
+        task={task}
+        taskType="do"
+        onComplete={(result) => {
+          if (!result.success) {
+            process.exit(1);
+          }
+        }}
+        onError={() => process.exit(1)}
+      />
+    );
+  });
+
+// Code task execution
+program
+  .command('code <task>')
+  .description('Execute a coding task')
+  .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
+  .option('-d, --directory <path>', 'Working directory', '.')
+  .option('--no-git', 'Disable git operations')
+  .action(async (task: string, options) => {
+    const tokens = config.getTokens();
+
+    if (!tokens) {
+      console.log('Please login first: jarvis login');
+      process.exit(1);
+    }
+
+    render(
+      <TaskRunner
+        serverUrl={options.server}
+        tokens={tokens}
+        task={task}
+        taskType="code"
+        options={{
+          workingDirectory: options.directory,
+          useGit: options.git !== false,
+        }}
+        onComplete={(result) => {
+          if (!result.success) {
+            process.exit(1);
+          }
+        }}
+        onError={() => process.exit(1)}
+      />
+    );
+  });
+
+// Research task
+program
+  .command('research <topic>')
+  .description('Research a topic and synthesize findings')
+  .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
+  .option('-d, --depth <level>', 'Research depth: shallow, moderate, deep', 'moderate')
+  .option('--no-sources', 'Exclude source URLs from output')
+  .option('--no-save', 'Do not save to memory')
+  .action(async (topic: string, options) => {
+    const tokens = config.getTokens();
+
+    if (!tokens) {
+      console.log('Please login first: jarvis login');
+      process.exit(1);
+    }
+
+    render(
+      <ResearchViewer
+        serverUrl={options.server}
+        tokens={tokens}
+        topic={topic}
+        depth={options.depth}
+        includeSources={options.sources !== false}
+        saveToMemory={options.save !== false}
+        onComplete={(result) => {
+          // Exit after displaying results
+        }}
+        onError={() => process.exit(1)}
+      />
+    );
+  });
+
+// Remember (store memory)
+program
+  .command('remember <content>')
+  .description('Store information in JARVIS memory')
+  .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
+  .option('-t, --type <type>', 'Memory type: fact, preference, event, conversation, skill', 'fact')
+  .option('-i, --importance <level>', 'Importance level 0-1', '0.5')
+  .action(async (content: string, options) => {
+    const tokens = config.getTokens();
+
+    if (!tokens) {
+      console.log('Please login first: jarvis login');
+      process.exit(1);
+    }
+
+    render(
+      <MemoryManager
+        serverUrl={options.server}
+        tokens={tokens}
+        mode="remember"
+        content={content}
+        options={{
+          memoryType: options.type,
+          importance: parseFloat(options.importance),
+        }}
+        onComplete={() => {
+          // Exit after storing
+        }}
+        onError={() => process.exit(1)}
+      />
+    );
+  });
+
+// Recall (search memory)
+program
+  .command('recall <query>')
+  .description('Search JARVIS memory')
+  .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
+  .option('-l, --limit <count>', 'Maximum results to return', '5')
+  .action(async (query: string, options) => {
+    const tokens = config.getTokens();
+
+    if (!tokens) {
+      console.log('Please login first: jarvis login');
+      process.exit(1);
+    }
+
+    render(
+      <MemoryManager
+        serverUrl={options.server}
+        tokens={tokens}
+        mode="recall"
+        query={query}
+        options={{
+          limit: parseInt(options.limit),
+        }}
+        onComplete={() => {
+          // Exit after displaying
+        }}
+        onError={() => process.exit(1)}
+      />
+    );
+  });
+
+// Browser automation task
+program
+  .command('browse')
+  .description('Execute browser automation tasks')
+  .option('-s, --server <url>', 'API server URL', 'http://localhost:3000')
+  .option('-u, --url <url>', 'URL to navigate to')
+  .option('-t, --task <description>', 'Task description')
+  .action(async (options) => {
+    const tokens = config.getTokens();
+
+    if (!tokens) {
+      console.log('Please login first: jarvis login');
+      process.exit(1);
+    }
+
+    if (!options.task) {
+      console.log('Please specify a task with --task');
+      process.exit(1);
+    }
+
+    render(
+      <TaskRunner
+        serverUrl={options.server}
+        tokens={tokens}
+        task={options.task}
+        taskType="automation"
+        options={{
+          url: options.url,
+        }}
+        onComplete={(result) => {
+          if (!result.success) {
+            process.exit(1);
+          }
+        }}
+        onError={() => process.exit(1)}
       />
     );
   });
