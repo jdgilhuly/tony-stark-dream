@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.jarvis-session.md
+*.log
+.DS_Store
